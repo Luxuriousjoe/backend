@@ -1,3 +1,6 @@
+// ═══════════════════════════════════════════════════════════════
+//  GRACE CHURCH MEDIA — App Config
+// ═══════════════════════════════════════════════════════════════
 module.exports = {
   youtube: {
     clientId:     process.env.YOUTUBE_CLIENT_ID,
@@ -11,9 +14,9 @@ module.exports = {
     channelId: process.env.TELEGRAM_CHANNEL_ID,
   },
   jwt: {
-    secret:         process.env.JWT_SECRET || 'fallback_secret',
-    expiresIn:      process.env.JWT_EXPIRES_IN || '7d',
-    refreshSecret:  process.env.JWT_REFRESH_SECRET || 'fallback_refresh',
+    secret:         process.env.JWT_SECRET       || 'grace_fallback_secret_change_in_prod',
+    expiresIn:      process.env.JWT_EXPIRES_IN   || '7d',
+    refreshSecret:  process.env.JWT_REFRESH_SECRET  || 'grace_fallback_refresh_change_in_prod',
     refreshExpires: process.env.JWT_REFRESH_EXPIRES_IN || '30d',
   },
   upload: {
