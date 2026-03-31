@@ -1,9 +1,12 @@
-const bcrypt = require('bcryptjs');
+// ═══════════════════════════════════════════════════════════════
+//  GRACE CHURCH MEDIA — Admin Controller
+//  Uses plain text passwords (no bcrypt)
+// ═══════════════════════════════════════════════════════════════
 const db     = require('../config/db_config');
 const logger = require('../utils/logger');
 
 exports.getAllUsers = async (req, res, next) => {
-  logger.info(`ADMIN | getAllUsers | requested by ${req.user?.email}`);
+  logger.info(`ADMIN | getAllUsers | by ${req.user?.email}`);
   try {
     const [rows] = await db.promise().query(
       'SELECT id, name, email, role, is_active, created_at FROM users ORDER BY created_at DESC'
@@ -15,17 +18,20 @@ exports.getAllUsers = async (req, res, next) => {
 
 exports.createAdmin = async (req, res, next) => {
   const { name, email, password } = req.body;
-  logger.info(`ADMIN | createAdmin | new admin: ${email} by ${req.user?.email}`);
+  logger.info(`ADMIN | createAdmin | ${email} by ${req.user?.email}`);
   try {
     if (!name || !email || !password)
       return res.status(400).json({ success: false, message: 'Name, email, and password required' });
-    const hash = await bcrypt.hash(password, 12);
+
+    // Store plain text password
     const [result] = await db.promise().query(
-      'INSERT INTO users (name, email, role, password_hash, is_active) VALUES (?, ?, "admin", ?, 1)',
-      [name, email.toLowerCase(), hash]
+      'INSERT INTO users (name, email, role, password, is_active) VALUES (?, ?, "admin", ?, 1)',
+      [name, email.toLowerCase(), password]
     );
-    await db.promise().query('INSERT INTO logs (action, user_id, details) VALUES (?, ?, ?)',
-      ['ADMIN_CREATED', req.user.id, `Admin account created: ${email}`]);
+    await db.promise().query(
+      'INSERT INTO logs (action, user_id, details) VALUES (?, ?, ?)',
+      ['ADMIN_CREATED', req.user.id, `Admin account created: ${email}`]
+    );
     logger.info(`ADMIN | Admin created: id:${result.insertId} email:${email}`);
     return res.status(201).json({ success: true, message: 'Admin user created', data: { id: result.insertId } });
   } catch (err) { logger.error('createAdmin error:', err.message); next(err); }
@@ -33,14 +39,15 @@ exports.createAdmin = async (req, res, next) => {
 
 exports.createUser = async (req, res, next) => {
   const { name, email, password } = req.body;
-  logger.info(`ADMIN | createUser | new user: ${email} by ${req.user?.email}`);
+  logger.info(`ADMIN | createUser | ${email} by ${req.user?.email}`);
   try {
     if (!name || !email || !password)
       return res.status(400).json({ success: false, message: 'Name, email, and password required' });
-    const hash = await bcrypt.hash(password, 12);
+
+    // Store plain text password
     const [result] = await db.promise().query(
-      'INSERT INTO users (name, email, role, password_hash, is_active) VALUES (?, ?, "user", ?, 1)',
-      [name, email.toLowerCase(), hash]
+      'INSERT INTO users (name, email, role, password, is_active) VALUES (?, ?, "user", ?, 1)',
+      [name, email.toLowerCase(), password]
     );
     logger.info(`ADMIN | User created: id:${result.insertId} email:${email}`);
     return res.status(201).json({ success: true, message: 'User created', data: { id: result.insertId } });
@@ -55,7 +62,7 @@ exports.toggleUser = async (req, res, next) => {
     if (!rows.length) return res.status(404).json({ success: false, message: 'User not found' });
     const newStatus = rows[0].is_active ? 0 : 1;
     await db.promise().query('UPDATE users SET is_active = ? WHERE id = ?', [newStatus, id]);
-    logger.info(`ADMIN | User id:${id} is now ${newStatus ? 'active' : 'inactive'}`);
+    logger.info(`ADMIN | User id:${id} → ${newStatus ? 'active' : 'inactive'}`);
     return res.json({ success: true, message: `User ${newStatus ? 'activated' : 'deactivated'}` });
   } catch (err) { logger.error('toggleUser error:', err.message); next(err); }
 };
@@ -71,7 +78,7 @@ exports.getLogs = async (req, res, next) => {
        ORDER BY l.timestamp DESC LIMIT ? OFFSET ?`,
       [parseInt(limit), offset]
     );
-    logger.db('SELECT', 'logs', `returned ${rows.length} log entries`);
+    logger.db('SELECT', 'logs', `returned ${rows.length} entries`);
     return res.json({ success: true, data: rows });
   } catch (err) { logger.error('getLogs error:', err.message); next(err); }
 };
@@ -87,7 +94,6 @@ exports.getDashboardStats = async (req, res, next) => {
     const [[{ videos }]]      = await db.promise().query('SELECT COUNT(*) AS videos FROM media WHERE type="video" AND status="uploaded"');
     const [[{ photos }]]      = await db.promise().query('SELECT COUNT(*) AS photos FROM media WHERE type="photo" AND status="uploaded"');
     const [[{ audios }]]      = await db.promise().query('SELECT COUNT(*) AS audios FROM media WHERE type="audio" AND status="uploaded"');
-    logger.info(`ADMIN | Stats: total:${total_media} uploaded:${uploaded} users:${total_users}`);
     return res.json({ success: true, data: { total_media, uploaded, pending, failed, total_users, videos, photos, audios } });
   } catch (err) { logger.error('getDashboardStats error:', err.message); next(err); }
 };
