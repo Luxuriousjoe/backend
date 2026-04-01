@@ -88,12 +88,25 @@ exports.login = async (req, res, next) => {
     );
     logger.db('INSERT', 'refresh_tokens', `saved for user id:${user.id}`);
 
-    // Write login to activity log
-    await db.promise().query(
-      'INSERT INTO logs (action, user_id, details, ip_addr) VALUES (?, ?, ?, ?)',
-      ['USER_LOGIN', user.id, `Successful login by ${user.email}`, ip]
-    );
-    logger.db('INSERT', 'logs', `login event saved for user id:${user.id}`);
+    // Write login to activity log (ip_addr may not exist on older schemas)
+    try {
+      await db.promise().query(
+        'INSERT INTO logs (action, user_id, details, ip_addr) VALUES (?, ?, ?, ?)',
+        ['USER_LOGIN', user.id, `Successful login by ${user.email}`, ip]
+      );
+      logger.db('INSERT', 'logs', `login event saved for user id:${user.id}`);
+    } catch (logErr) {
+      // Fallback when ip_addr column is missing in schema
+      if (logErr.message && logErr.message.includes("Unknown column 'ip_addr'")) {
+        await db.promise().query(
+          'INSERT INTO logs (action, user_id, details) VALUES (?, ?, ?)',
+          ['USER_LOGIN', user.id, `Successful login by ${user.email}`]
+        );
+        logger.db('INSERT', 'logs', `login event saved for user id:${user.id} (without ip)`);
+      } else {
+        throw logErr;
+      }
+    }
 
     logger.auth('LOGIN_SUCCESS', user.email, user.role, ip);
 
