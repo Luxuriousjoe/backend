@@ -63,9 +63,9 @@ exports.login = async (req, res, next) => {
     // ── PLAIN TEXT password comparison ────────────────────────
     logger.info(`LOGIN | Checking password for user id:${user.id}...`);
 
-    const storedPassword = user.password; // plain text column
-    const isMatch = (storedPassword === password);
-
+    const storedPassword = user.password_hash;
+    const isMatch = storedPassword === password;
+    
     if (!isMatch) {
       logger.warn(`LOGIN_FAIL | Wrong password for: ${cleanEmail} | ip:${ip}`);
       return res.status(401).json({
@@ -237,12 +237,18 @@ exports.changePassword = async (req, res, next) => {
     const user = rows[0];
 
     // Plain text comparison
-    if (user.password !== currentPassword) {
-      logger.warn(`CHANGE_PASSWORD | Wrong current password for user id:${user.id}`);
-      return res.status(400).json({ success: false, message: 'Current password is incorrect' });
-    }
+if (user.password_hash !== currentPassword) {
+  logger.warn(`CHANGE_PASSWORD | Wrong current password for user id:${user.id}`);
+  return res.status(400).json({
+    success: false,
+    message: 'Current password is incorrect'
+  });
+}
 
-    await db.promise().query('UPDATE users SET password = ? WHERE id = ?', [newPassword, user.id]);
+await db.promise().query(
+  'UPDATE users SET password_hash = ? WHERE id = ?',
+  [newPassword, user.id]
+);
     logger.auth('PWD_CHANGED', user.email, user.role, req.ip);
     return res.json({ success: true, message: 'Password updated successfully' });
   } catch (err) {
