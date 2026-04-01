@@ -8,7 +8,7 @@ exports.getAllMedia = async (req, res, next) => {
   try {
     const offset = (parseInt(page) - 1) * parseInt(limit);
     let query = `
-      SELECT m.id, m.type, m.title, m.thumbnail_url, m.status, m.created_at,
+      SELECT m.id, COALESCE(m.type, m.media_type) AS type, m.title, m.thumbnail_url, m.status, m.created_at,
         u.name AS uploaded_by_name,
         mm.event_name, mm.location, mm.description, mm.speaker_name,
         mm.sermon_topic, mm.service_date,
@@ -23,7 +23,7 @@ exports.getAllMedia = async (req, res, next) => {
     `;
     const params = [];
     if (type && ['video', 'photo', 'audio'].includes(type)) {
-      query += ' AND m.type = ?'; params.push(type);
+      query += ' AND COALESCE(m.type, m.media_type) = ?'; params.push(type);
     }
     if (search) {
       query += ' AND (mm.event_name LIKE ? OR mm.description LIKE ? OR mm.speaker_name LIKE ? OR m.title LIKE ?)';
@@ -34,7 +34,7 @@ exports.getAllMedia = async (req, res, next) => {
 
     const [rows] = await db.promise().query(query, params);
     const [[{ total }]] = await db.promise().query(
-      `SELECT COUNT(*) AS total FROM media m LEFT JOIN media_metadata mm ON m.id = mm.media_id WHERE m.status = 'uploaded' ${type ? 'AND m.type = ?' : ''}`,
+      `SELECT COUNT(*) AS total FROM media m LEFT JOIN media_metadata mm ON m.id = mm.media_id WHERE m.status = 'uploaded' ${type ? 'AND COALESCE(m.type, m.media_type) = ?' : ''}`,
       type ? [type] : []
     );
 
@@ -52,7 +52,8 @@ exports.getMediaById = async (req, res, next) => {
   logger.info(`MEDIA | getMediaById | id:${id}`);
   try {
     const [rows] = await db.promise().query(
-      `SELECT m.*, u.name AS uploaded_by_name,
+      `SELECT m.id, COALESCE(m.type, m.media_type) AS type, m.file_path, m.title, m.thumbnail_url, m.status, m.created_at,
+        u.name AS uploaded_by_name,
         mm.event_name, mm.location, mm.description, mm.participants,
         mm.speaker_name, mm.sermon_topic, mm.service_date,
         up_yt.youtube_link, up_yt.youtube_video_id, up_tg.telegram_msg_id
@@ -81,19 +82,29 @@ exports.createMedia = async (req, res, next) => {
     if (!type || !['video', 'photo', 'audio'].includes(type)) {
       return res.status(400).json({ success: false, message: 'Valid media type required (video/photo/audio)' });
     }
-    const [result] = await db.promise().query(
-      'INSERT INTO media (type, title, file_path, status, uploaded_by) VALUES (?, ?, ?, "pending", ?)',
-      [type, title || null, file_path || null, req.user.id]
-    );
+
+    // Backward compatibility with schema using media_type instead of type
+    const [columnCheck] = await db.promise().query("SHOW COLUMNS FROM media LIKE 'type'");
+    const hasTypeColumn = Array.isArray(columnCheck) && columnCheck.length > 0;
+    const typeColumn = hasTypeColumn ? 'type' : 'media_type';
+
+    const insertSql = `INSERT INTO media (${typeColumn}, title, file_path, status, uploaded_by) VALUES (?, ?, ?, 'pending', ?)`;
+    const insertValues = [type, title || null, file_path || null, req.user.id];
+
+    const [result] = await db.promise().query(insertSql, insertValues);
     const mediaId = result.insertId;
     logger.db('INSERT', 'media', `created media id:${mediaId}`);
 
     if (metadata) {
+      const parsedMetadata = typeof metadata === 'string' ? (() => {
+        try { return JSON.parse(metadata); } catch (e) { return {}; }
+      })() : metadata;
+
       await db.promise().query(
         `INSERT INTO media_metadata (media_id, event_name, location, description, participants, speaker_name, sermon_topic, service_date)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [mediaId, metadata.event_name||null, metadata.location||null, metadata.description||null,
-         metadata.participants||null, metadata.speaker_name||null, metadata.sermon_topic||null, metadata.service_date||null]
+        [mediaId, parsedMetadata.event_name||null, parsedMetadata.location||null, parsedMetadata.description||null,
+         parsedMetadata.participants||null, parsedMetadata.speaker_name||null, parsedMetadata.sermon_topic||null, parsedMetadata.service_date||null]
       );
       logger.db('INSERT', 'media_metadata', `saved metadata for media id:${mediaId}`);
     }
