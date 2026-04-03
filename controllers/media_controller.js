@@ -183,11 +183,11 @@ exports.createMedia = async (req, res, next) => {
       ['MEDIA_CREATED', req.user.id, `${type} media created: ${title || 'Untitled'}`]
     );
 
-    const { triggerUploadByMediaId } = require('./upload_controller');
+    const uploadController = require('./upload_controller');
 
     setImmediate(async () => {
       try {
-        await triggerUploadByMediaId(mediaId, req.user?.email || 'createMedia');
+        await uploadController.triggerUploadByMediaId(mediaId, req.user?.email || 'createMedia');
         logger.info(`MEDIA | Background upload started for media:${mediaId}`);
       } catch (err) {
         logger.error(`MEDIA | Background upload failed for media:${mediaId} | ${err.message}`);
