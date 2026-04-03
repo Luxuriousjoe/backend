@@ -133,7 +133,11 @@ exports.createMedia = async (req, res, next) => {
        VALUES (?, 'telegram', 'pending'), (?, 'youtube', 'pending')`,
       [mediaId, mediaId]
     );
+    const { triggerUpload } = require('./upload_controller');
 
+    triggerUpload(mediaId).catch(err => {
+      console.error('Upload trigger failed:', err.message);
+    });
     await db.promise().query(
       'INSERT INTO logs (action, user_id, details) VALUES (?, ?, ?)',
       ['MEDIA_CREATED', req.user.id, `${type} media created: ${title || 'Untitled'}`]
