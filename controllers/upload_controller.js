@@ -396,3 +396,7 @@ exports.getSavedVideos = async (req, res, next) => {
 };
 
 module.exports.triggerUploadByMediaId = triggerUploadByMediaId;
+module.exports = {
+  triggerUploadByMediaId,
+  triggerUpload, // if you also have route handler
+};
