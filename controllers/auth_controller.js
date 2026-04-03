@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════════════════
 //  GRACE CHURCH MEDIA — Auth Controller
-//  Uses PLAIN TEXT password (no bcrypt)
-//  Full logging on every action
+//  Password stored in column: password_hash (plain text, no bcrypt)
+//  Column name matches actual defaultdb users table schema
 // ═══════════════════════════════════════════════════════════════
 const jwt    = require('jsonwebtoken');
 const db     = require('../config/db_config');
@@ -16,7 +16,7 @@ const generateTokens = (user) => {
     role:  user.role,
     name:  user.name,
   };
-  const accessToken  = jwt.sign(payload, config.jwt.secret, { expiresIn: config.jwt.expiresIn });
+  const accessToken  = jwt.sign(payload, config.jwt.secret,        { expiresIn: config.jwt.expiresIn });
   const refreshToken = jwt.sign({ id: user.id }, config.jwt.refreshSecret, { expiresIn: config.jwt.refreshExpires });
   return { accessToken, refreshToken };
 };
@@ -29,7 +29,6 @@ exports.login = async (req, res, next) => {
   logger.auth('LOGIN_ATTEMPT', email || 'NO_EMAIL', '?', ip);
 
   try {
-    // Validate input
     if (!email || !password) {
       logger.warn(`LOGIN_FAIL | Missing email or password | ip:${ip}`);
       return res.status(400).json({
@@ -41,7 +40,6 @@ exports.login = async (req, res, next) => {
     const cleanEmail = email.toLowerCase().trim();
     logger.db('SELECT', 'users', `looking up email: ${cleanEmail}`);
 
-    // Find user by email
     const [rows] = await db.promise().query(
       'SELECT * FROM users WHERE email = ? AND is_active = 1',
       [cleanEmail]
@@ -60,10 +58,22 @@ exports.login = async (req, res, next) => {
     const user = rows[0];
     logger.info(`LOGIN | User found: id:${user.id} name:${user.name} role:${user.role}`);
 
-    // ── PLAIN TEXT password comparison ────────────────────────
+    // ── Read from password_hash column (plain text, no bcrypt) ──
     logger.info(`LOGIN | Checking password for user id:${user.id}...`);
 
-    const storedPassword = user.password; // plain text column
+    // The DB column is named password_hash but stores plain text
+    const storedPassword = user.password_hash;
+
+    logger.info(`LOGIN | stored length:${storedPassword?.length} incoming length:${password?.length}`);
+
+    if (!storedPassword) {
+      logger.error(`LOGIN_FAIL | password_hash is null/undefined for user id:${user.id}`);
+      return res.status(500).json({
+        success: false,
+        message: 'Account password not configured. Please contact the administrator.',
+      });
+    }
+
     const isMatch = (storedPassword === password);
 
     if (!isMatch) {
@@ -76,7 +86,6 @@ exports.login = async (req, res, next) => {
 
     logger.info(`LOGIN | Password matched for user id:${user.id}`);
 
-    // Generate JWT tokens
     const { accessToken, refreshToken } = generateTokens(user);
     logger.info(`LOGIN | Tokens generated for user id:${user.id}`);
 
@@ -88,23 +97,21 @@ exports.login = async (req, res, next) => {
     );
     logger.db('INSERT', 'refresh_tokens', `saved for user id:${user.id}`);
 
-    // Write login to activity log (ip_addr may not exist on older schemas)
+    // Log the login event
     try {
       await db.promise().query(
         'INSERT INTO logs (action, user_id, details, ip_addr) VALUES (?, ?, ?, ?)',
         ['USER_LOGIN', user.id, `Successful login by ${user.email}`, ip]
       );
-      logger.db('INSERT', 'logs', `login event saved for user id:${user.id}`);
     } catch (logErr) {
-      // Fallback when ip_addr column is missing in schema
-      if (logErr.message && logErr.message.includes("Unknown column 'ip_addr'")) {
+      // ip_addr column may not exist in all schema versions
+      if (logErr.message?.includes("Unknown column 'ip_addr'")) {
         await db.promise().query(
           'INSERT INTO logs (action, user_id, details) VALUES (?, ?, ?)',
           ['USER_LOGIN', user.id, `Successful login by ${user.email}`]
         );
-        logger.db('INSERT', 'logs', `login event saved for user id:${user.id} (without ip)`);
       } else {
-        throw logErr;
+        logger.warn(`LOGIN | Could not write log: ${logErr.message}`);
       }
     }
 
@@ -209,7 +216,7 @@ exports.getMe = async (req, res, next) => {
   logger.info(`GET_ME | user id:${req.user?.id}`);
   try {
     const [rows] = await db.promise().query(
-      'SELECT id, name, email, role, created_at FROM users WHERE id = ?',
+      'SELECT id, name, email, role, avatar_url, created_at FROM users WHERE id = ?',
       [req.user.id]
     );
     if (!rows.length) return res.status(404).json({ success: false, message: 'User not found' });
@@ -221,7 +228,8 @@ exports.getMe = async (req, res, next) => {
   }
 };
 
-// ─── CHANGE PASSWORD (plain text) ────────────────────────────
+// ─── CHANGE PASSWORD ──────────────────────────────────────────
+// Reads and writes password_hash column (plain text stored there)
 exports.changePassword = async (req, res, next) => {
   logger.info(`CHANGE_PASSWORD | user id:${req.user?.id}`);
   try {
@@ -234,17 +242,24 @@ exports.changePassword = async (req, res, next) => {
     }
 
     const [rows] = await db.promise().query('SELECT * FROM users WHERE id = ?', [req.user.id]);
+    if (!rows.length) return res.status(404).json({ success: false, message: 'User not found' });
+
     const user = rows[0];
 
-    // Plain text comparison
-    if (user.password !== currentPassword) {
+    // Compare against password_hash column (plain text)
+    if (user.password_hash !== currentPassword) {
       logger.warn(`CHANGE_PASSWORD | Wrong current password for user id:${user.id}`);
       return res.status(400).json({ success: false, message: 'Current password is incorrect' });
     }
 
-    await db.promise().query('UPDATE users SET password = ? WHERE id = ?', [newPassword, user.id]);
+    // Update password_hash column with new plain text value
+    await db.promise().query(
+      'UPDATE users SET password_hash = ? WHERE id = ?',
+      [newPassword, user.id]
+    );
     logger.auth('PWD_CHANGED', user.email, user.role, req.ip);
     return res.json({ success: true, message: 'Password updated successfully' });
+
   } catch (err) {
     logger.error('CHANGE_PASSWORD_ERROR:', err.message);
     next(err);
