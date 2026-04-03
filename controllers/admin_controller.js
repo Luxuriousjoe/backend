@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════════════════════════
 //  GRACE CHURCH MEDIA — Admin Controller
-//  Uses plain text passwords (no bcrypt)
+//  Stores plain text password in password_hash column
+//  (column is named password_hash but stores plain text)
 // ═══════════════════════════════════════════════════════════════
 const db     = require('../config/db_config');
 const logger = require('../utils/logger');
@@ -23,15 +24,21 @@ exports.createAdmin = async (req, res, next) => {
     if (!name || !email || !password)
       return res.status(400).json({ success: false, message: 'Name, email, and password required' });
 
-    // Store plain text password
+    // Store plain text in password_hash column (matches DB schema)
     const [result] = await db.promise().query(
-      'INSERT INTO users (name, email, role, password, is_active) VALUES (?, ?, "admin", ?, 1)',
+      'INSERT INTO users (name, email, role, password_hash, is_active) VALUES (?, ?, "admin", ?, 1)',
       [name, email.toLowerCase(), password]
     );
-    await db.promise().query(
-      'INSERT INTO logs (action, user_id, details) VALUES (?, ?, ?)',
-      ['ADMIN_CREATED', req.user.id, `Admin account created: ${email}`]
-    );
+
+    try {
+      await db.promise().query(
+        'INSERT INTO logs (action, user_id, details) VALUES (?, ?, ?)',
+        ['ADMIN_CREATED', req.user.id, `Admin account created: ${email}`]
+      );
+    } catch (logErr) {
+      logger.warn(`createAdmin | Could not write log: ${logErr.message}`);
+    }
+
     logger.info(`ADMIN | Admin created: id:${result.insertId} email:${email}`);
     return res.status(201).json({ success: true, message: 'Admin user created', data: { id: result.insertId } });
   } catch (err) { logger.error('createAdmin error:', err.message); next(err); }
@@ -44,11 +51,12 @@ exports.createUser = async (req, res, next) => {
     if (!name || !email || !password)
       return res.status(400).json({ success: false, message: 'Name, email, and password required' });
 
-    // Store plain text password
+    // Store plain text in password_hash column (matches DB schema)
     const [result] = await db.promise().query(
-      'INSERT INTO users (name, email, role, password, is_active) VALUES (?, ?, "user", ?, 1)',
+      'INSERT INTO users (name, email, role, password_hash, is_active) VALUES (?, ?, "user", ?, 1)',
       [name, email.toLowerCase(), password]
     );
+
     logger.info(`ADMIN | User created: id:${result.insertId} email:${email}`);
     return res.status(201).json({ success: true, message: 'User created', data: { id: result.insertId } });
   } catch (err) { logger.error('createUser error:', err.message); next(err); }
@@ -94,6 +102,7 @@ exports.getDashboardStats = async (req, res, next) => {
     const [[{ videos }]]      = await db.promise().query('SELECT COUNT(*) AS videos FROM media WHERE type="video" AND status="uploaded"');
     const [[{ photos }]]      = await db.promise().query('SELECT COUNT(*) AS photos FROM media WHERE type="photo" AND status="uploaded"');
     const [[{ audios }]]      = await db.promise().query('SELECT COUNT(*) AS audios FROM media WHERE type="audio" AND status="uploaded"');
+    logger.info(`ADMIN | Stats: total:${total_media} uploaded:${uploaded} users:${total_users}`);
     return res.json({ success: true, data: { total_media, uploaded, pending, failed, total_users, videos, photos, audios } });
   } catch (err) { logger.error('getDashboardStats error:', err.message); next(err); }
 };
