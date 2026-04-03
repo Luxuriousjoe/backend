@@ -183,20 +183,18 @@ exports.createMedia = async (req, res, next) => {
       ['MEDIA_CREATED', req.user.id, `${type} media created: ${title || 'Untitled'}`]
     );
 
-    const uploadController = require('./upload_controller');
+    
 
-    setImmediate(async () => {
-      try {
-        await uploadController.triggerUploadByMediaId(mediaId, req.user?.email || 'createMedia');
-        logger.info(`MEDIA | Background upload started for media:${mediaId}`);
-      } catch (err) {
-        logger.error(`MEDIA | Background upload failed for media:${mediaId} | ${err.message}`);
-        await db.promise().query(
-          'UPDATE media SET status = "failed" WHERE id = ?',
-          [mediaId]
-        ).catch(() => {});
-      }
-    });
+const uploadController = require('./upload_controller');
+
+console.log('🚀 ABOUT TO TRIGGER UPLOAD for media:', mediaId);
+
+try {
+  await uploadController.triggerUploadByMediaId(mediaId);
+  console.log('✅ UPLOAD TRIGGERED SUCCESSFULLY for media:', mediaId);
+} catch (err) {
+  console.error('❌ UPLOAD TRIGGER FAILED:', err.message);
+}
 
     return res.status(201).json({
       success: true,
