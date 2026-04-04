@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const db = require('../config/db_config');
+const telegramService = require('../services/telegram_service');
 const logger = require('../utils/logger');
 
 const CONTENT_TYPES = {
@@ -16,6 +17,35 @@ const CONTENT_TYPES = {
   '.png': 'image/png',
   '.webp': 'image/webp',
 };
+
+let uploadsColumnCache = null;
+
+async function getUploadsColumns() {
+  if (uploadsColumnCache) {
+    return uploadsColumnCache;
+  }
+
+  const [rows] = await db.promise().query('SHOW COLUMNS FROM uploads');
+  uploadsColumnCache = new Set(rows.map((row) => row.Field));
+  return uploadsColumnCache;
+}
+
+function streamLocalFile({ filePath, wantsDownload, res }) {
+  const stat = fs.statSync(filePath);
+  const fileSize = stat.size;
+  const extension = path.extname(filePath).toLowerCase();
+  const contentType = CONTENT_TYPES[extension] || 'application/octet-stream';
+  const fileName = path.basename(filePath);
+
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader(
+    'Content-Disposition',
+    `${wantsDownload ? 'attachment' : 'inline'}; filename="${fileName}"`
+  );
+
+  return { fileSize, fileName };
+}
 
 // ─── GET ALL MEDIA ────────────────────────────────────────────
 exports.getAllMedia = async (req, res, next) => {
@@ -139,10 +169,35 @@ exports.streamMediaFile = async (req, res, next) => {
   const wantsDownload = req.query.download === '1';
 
   try {
+    const uploadColumns = await getUploadsColumns();
+    const tgFileIdSelect = uploadColumns.has('telegram_file_id')
+      ? 'up_tg.telegram_file_id'
+      : 'NULL AS telegram_file_id';
+    const tgFilePathSelect = uploadColumns.has('telegram_file_path')
+      ? 'up_tg.telegram_file_path'
+      : 'NULL AS telegram_file_path';
+
     const [rows] = await db.promise().query(
-      `SELECT id, type, file_path, title
-       FROM media
-       WHERE id = ?`,
+      `SELECT
+         m.id,
+         m.type,
+         m.file_path,
+         m.title,
+         up_tg.telegram_msg_id,
+         ${tgFileIdSelect},
+         ${tgFilePathSelect},
+         up_yt.youtube_link,
+         up_yt.youtube_video_id
+       FROM media m
+       LEFT JOIN uploads up_tg
+         ON m.id = up_tg.media_id
+        AND up_tg.platform = 'telegram'
+        AND up_tg.upload_status = 'success'
+       LEFT JOIN uploads up_yt
+         ON m.id = up_yt.media_id
+        AND up_yt.platform = 'youtube'
+        AND up_yt.upload_status = 'success'
+       WHERE m.id = ?`,
       [id]
     );
 
@@ -151,43 +206,59 @@ exports.streamMediaFile = async (req, res, next) => {
     }
 
     const media = rows[0];
-    if (!media.file_path || !fs.existsSync(media.file_path)) {
-      return res.status(404).json({ success: false, message: 'Media file not available' });
-    }
+    if (media.file_path && fs.existsSync(media.file_path)) {
+      const { fileSize } = streamLocalFile({
+        filePath: media.file_path,
+        wantsDownload,
+        res,
+      });
 
-    const stat = fs.statSync(media.file_path);
-    const fileSize = stat.size;
-    const extension = path.extname(media.file_path).toLowerCase();
-    const contentType = CONTENT_TYPES[extension] || 'application/octet-stream';
-    const fileName = path.basename(media.file_path);
+      const range = req.headers.range;
+      if (range) {
+        const [startText, endText] = range.replace(/bytes=/, '').split('-');
+        const start = Number.parseInt(startText, 10);
+        const end = endText ? Number.parseInt(endText, 10) : fileSize - 1;
 
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader(
-      'Content-Disposition',
-      `${wantsDownload ? 'attachment' : 'inline'}; filename="${fileName}"`
-    );
+        if (Number.isNaN(start) || Number.isNaN(end) || start > end || end >= fileSize) {
+          res.status(416).setHeader('Content-Range', `bytes */${fileSize}`);
+          return res.end();
+        }
 
-    const range = req.headers.range;
-    if (range) {
-      const [startText, endText] = range.replace(/bytes=/, '').split('-');
-      const start = Number.parseInt(startText, 10);
-      const end = endText ? Number.parseInt(endText, 10) : fileSize - 1;
-
-      if (Number.isNaN(start) || Number.isNaN(end) || start > end || end >= fileSize) {
-        res.status(416).setHeader('Content-Range', `bytes */${fileSize}`);
-        return res.end();
+        res.status(206);
+        res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
+        res.setHeader('Content-Length', end - start + 1);
+        fs.createReadStream(media.file_path, { start, end }).pipe(res);
+        return;
       }
 
-      res.status(206);
-      res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
-      res.setHeader('Content-Length', end - start + 1);
-      fs.createReadStream(media.file_path, { start, end }).pipe(res);
+      res.setHeader('Content-Length', fileSize);
+      fs.createReadStream(media.file_path).pipe(res);
       return;
     }
 
-    res.setHeader('Content-Length', fileSize);
-    fs.createReadStream(media.file_path).pipe(res);
+    if (media.telegram_file_id || media.telegram_file_path) {
+      const fallbackName = media.title
+        ? `${media.title}${path.extname(media.file_path || '') || ''}`
+        : `media-${media.id}`;
+
+      await telegramService.streamFileToResponse({
+        fileId: media.telegram_file_id,
+        filePath: media.telegram_file_path,
+        res,
+        wantsDownload,
+        fileName: fallbackName,
+      });
+      return;
+    }
+
+    const platformHint = media.youtube_link
+      ? 'The original file is unavailable on the server. YouTube playback is still available, but direct file download is not supported by the YouTube API.'
+      : 'Media file not available. To support Telegram fallback downloads, store telegram_file_id and telegram_file_path on upload success.';
+
+    return res.status(404).json({
+      success: false,
+      message: platformHint,
+    });
   } catch (err) {
     logger.error('streamMediaFile error:', err.message);
     next(err);

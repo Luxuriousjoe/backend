@@ -8,6 +8,18 @@ const youtubeService = require('../services/youtube_service');
 const telegramService = require('../services/telegram_service');
 const logger = require('../utils/logger');
 
+let uploadsColumnCache = null;
+
+async function getUploadsColumns() {
+  if (uploadsColumnCache) {
+    return uploadsColumnCache;
+  }
+
+  const [rows] = await db.promise().query('SHOW COLUMNS FROM uploads');
+  uploadsColumnCache = new Set(rows.map((row) => row.Field));
+  return uploadsColumnCache;
+}
+
 // ─── Internal helper: process one media upload ────────────────
 async function triggerUploadByMediaId(mediaId, actor = 'system') {
   logger.media('TRIGGER', '?', mediaId, `by ${actor}`);
@@ -167,15 +179,38 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
       const mediaWithLink = { ...media, youtube_link: existingYouTubeLink };
       const tgResult = await telegramService.sendMedia(mediaWithLink);
       telegramMsgId = tgResult.messageId;
+      const uploadColumns = await getUploadsColumns();
+      const hasTelegramFileId = uploadColumns.has('telegram_file_id');
+      const hasTelegramFilePath = uploadColumns.has('telegram_file_path');
+      const hasTelegramFileUniqueId = uploadColumns.has('telegram_file_unique_id');
+      const setParts = [
+        "upload_status = 'success'",
+        'telegram_msg_id = ?',
+        'upload_date = NOW()',
+        'error_message = NULL',
+      ];
+      const setParams = [telegramMsgId];
+
+      if (hasTelegramFileId) {
+        setParts.push('telegram_file_id = ?');
+        setParams.push(tgResult.fileId || null);
+      }
+
+      if (hasTelegramFilePath) {
+        setParts.push('telegram_file_path = ?');
+        setParams.push(tgResult.filePath || null);
+      }
+
+      if (hasTelegramFileUniqueId) {
+        setParts.push('telegram_file_unique_id = ?');
+        setParams.push(tgResult.fileUniqueId || null);
+      }
 
       await db.promise().query(
         `UPDATE uploads
-         SET upload_status = 'success',
-             telegram_msg_id = ?,
-             upload_date = NOW(),
-             error_message = NULL
+         SET ${setParts.join(', ')}
          WHERE media_id = ? AND platform = 'telegram'`,
-        [telegramMsgId, mediaId]
+        [...setParams, mediaId]
       );
 
       logger.media('TG_DONE', mediaType, mediaId, `msg_id:${telegramMsgId}`);
