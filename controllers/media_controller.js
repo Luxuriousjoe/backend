@@ -12,7 +12,7 @@ exports.getAllMedia = async (req, res, next) => {
     let query = `
       SELECT
         m.id,
-        COALESCE(m.type, m.media_type) AS type,
+        m.type AS type,
         m.title,
         m.thumbnail_url,
         m.status,
@@ -44,7 +44,7 @@ exports.getAllMedia = async (req, res, next) => {
     const params = [];
 
     if (type && ['video', 'photo', 'audio'].includes(type)) {
-      query += ` AND COALESCE(m.type, m.media_type) = ?`;
+      query += ` AND m.type = ?`;
       params.push(type);
     }
 
@@ -81,7 +81,7 @@ exports.getMediaById = async (req, res, next) => {
     const [rows] = await db.promise().query(
       `SELECT
         m.id,
-        COALESCE(m.type, m.media_type) AS type,
+        m.type AS type,
         m.file_path,
         m.title,
         m.thumbnail_url,

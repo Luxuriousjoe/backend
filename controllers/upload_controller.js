@@ -29,16 +29,77 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
   logger.info(`TRIGGER | Found media: type=${media.type} title=${media.title} path=${media.file_path}`);
 
   const mediaType = media.type;
+  const [uploadRows] = await db.promise().query(
+    `SELECT platform, upload_status, youtube_link, youtube_video_id, telegram_msg_id
+     FROM uploads
+     WHERE media_id = ?`,
+    [mediaId]
+  );
+
+  const uploadByPlatform = Object.fromEntries(
+    uploadRows.map((row) => [row.platform, row])
+  );
+  const pendingPlatforms = uploadRows
+    .filter((row) => row.upload_status === 'pending' || row.upload_status === 'failed')
+    .map((row) => row.platform);
+  const hasInProgress = uploadRows.some((row) => row.upload_status === 'in_progress');
+  const allSuccessBeforeStart =
+    uploadRows.length > 0 && uploadRows.every((row) => row.upload_status === 'success');
+
+  if (allSuccessBeforeStart) {
+    logger.media('SKIP', mediaType, mediaId, 'all platform uploads already succeeded');
+    await db.promise().query(
+      "UPDATE media SET status = 'uploaded' WHERE id = ?",
+      [mediaId]
+    );
+
+    return {
+      success: true,
+      mediaId,
+      finalStatus: 'uploaded',
+      skipped: true,
+    };
+  }
+
+  if (hasInProgress && pendingPlatforms.length === 0) {
+    logger.media('SKIP', mediaType, mediaId, 'upload already in progress');
+    return {
+      success: true,
+      mediaId,
+      finalStatus: 'uploading',
+      skipped: true,
+    };
+  }
+
+  const shouldUploadYouTube = mediaType !== 'photo' && pendingPlatforms.includes('youtube');
+  const shouldMarkPhotoYouTubeSuccess =
+    mediaType === 'photo' && pendingPlatforms.includes('youtube');
+  const shouldUploadTelegram = pendingPlatforms.includes('telegram');
 
   await db.promise().query(
     "UPDATE media SET status = 'uploading' WHERE id = ?",
     [mediaId]
   );
 
-  await db.promise().query(
-    "UPDATE uploads SET upload_status = 'in_progress', error_message = NULL WHERE media_id = ?",
-    [mediaId]
-  );
+  if (shouldUploadYouTube || shouldMarkPhotoYouTubeSuccess) {
+    await db.promise().query(
+      `UPDATE uploads
+       SET upload_status = 'in_progress',
+           error_message = NULL
+       WHERE media_id = ? AND platform = 'youtube'`,
+      [mediaId]
+    );
+  }
+
+  if (shouldUploadTelegram) {
+    await db.promise().query(
+      `UPDATE uploads
+       SET upload_status = 'in_progress',
+           error_message = NULL
+       WHERE media_id = ? AND platform = 'telegram'`,
+      [mediaId]
+    );
+  }
 
   let youtubeLink = null;
   let youtubeVideoId = null;
@@ -47,7 +108,7 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
   let tgError = null;
 
   // ── YouTube Upload (videos and audio only) ────────────────
-  if (mediaType !== 'photo') {
+  if (shouldUploadYouTube) {
     try {
       logger.media('YT_START', mediaType, mediaId, 'uploading to YouTube...');
       const ytResult = await youtubeService.uploadMedia(media);
@@ -84,7 +145,7 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
         [err.message, mediaId]
       );
     }
-  } else {
+  } else if (shouldMarkPhotoYouTubeSuccess) {
     // photos skip YouTube for now
     await db.promise().query(
       `UPDATE uploads
@@ -97,34 +158,39 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
   }
 
   // ── Telegram Upload (all types) ───────────────────────────
-  try {
-    logger.media('TG_START', mediaType, mediaId, 'sending to Telegram...');
-    const mediaWithLink = { ...media, youtube_link: youtubeLink };
-    const tgResult = await telegramService.sendMedia(mediaWithLink);
-    telegramMsgId = tgResult.messageId;
+  if (shouldUploadTelegram) {
+    try {
+      logger.media('TG_START', mediaType, mediaId, 'sending to Telegram...');
+      const existingYouTubeLink = shouldUploadYouTube
+        ? youtubeLink
+        : (uploadByPlatform.youtube?.youtube_link || null);
+      const mediaWithLink = { ...media, youtube_link: existingYouTubeLink };
+      const tgResult = await telegramService.sendMedia(mediaWithLink);
+      telegramMsgId = tgResult.messageId;
 
-    await db.promise().query(
-      `UPDATE uploads
-       SET upload_status = 'success',
-           telegram_msg_id = ?,
-           upload_date = NOW(),
-           error_message = NULL
-       WHERE media_id = ? AND platform = 'telegram'`,
-      [telegramMsgId, mediaId]
-    );
+      await db.promise().query(
+        `UPDATE uploads
+         SET upload_status = 'success',
+             telegram_msg_id = ?,
+             upload_date = NOW(),
+             error_message = NULL
+         WHERE media_id = ? AND platform = 'telegram'`,
+        [telegramMsgId, mediaId]
+      );
 
-    logger.media('TG_DONE', mediaType, mediaId, `msg_id:${telegramMsgId}`);
-  } catch (err) {
-    tgError = err.message;
-    logger.error(`TG_FAIL | media:${mediaId} | ${err.message}`);
+      logger.media('TG_DONE', mediaType, mediaId, `msg_id:${telegramMsgId}`);
+    } catch (err) {
+      tgError = err.message;
+      logger.error(`TG_FAIL | media:${mediaId} | ${err.message}`);
 
-    await db.promise().query(
-      `UPDATE uploads
-       SET upload_status = 'failed',
-           error_message = ?
-       WHERE media_id = ? AND platform = 'telegram'`,
-      [err.message, mediaId]
-    );
+      await db.promise().query(
+        `UPDATE uploads
+         SET upload_status = 'failed',
+             error_message = ?
+         WHERE media_id = ? AND platform = 'telegram'`,
+        [err.message, mediaId]
+      );
+    }
   }
 
   // ── Set final media status ────────────────────────────────
