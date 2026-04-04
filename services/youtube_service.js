@@ -47,6 +47,14 @@ exports.uploadMedia = async (media) => {
 
   logger.info(`YT | Uploading: "${title}" (${media.type})`);
 
+  const scheduledAt = media.youtube_schedule_at
+    ? new Date(media.youtube_schedule_at)
+    : null;
+  const isScheduled =
+    scheduledAt instanceof Date &&
+    !Number.isNaN(scheduledAt.getTime()) &&
+    scheduledAt.getTime() > Date.now();
+
   const response = await youtube.videos.insert({
     part: ['snippet', 'status'],
     requestBody: {
@@ -56,7 +64,10 @@ exports.uploadMedia = async (media) => {
         tags:       ['church', 'sermon', 'worship', 'grace church', media.sermon_topic].filter(Boolean),
         categoryId: '22', // People & Blogs
       },
-      status: { privacyStatus: 'public' },
+      status: {
+        privacyStatus: isScheduled ? 'private' : 'public',
+        ...(isScheduled ? { publishAt: scheduledAt.toISOString() } : {}),
+      },
     },
     media: {
       mimeType,
@@ -66,7 +77,9 @@ exports.uploadMedia = async (media) => {
 
   const videoId = response.data.id;
   const link    = `https://www.youtube.com/watch?v=${videoId}`;
-  logger.info(`YT | Upload success: ${link}`);
+  logger.info(
+    `YT | Upload success: ${link}${isScheduled ? ` | scheduled:${scheduledAt.toISOString()}` : ''}`
+  );
   return { videoId, link };
 };
 

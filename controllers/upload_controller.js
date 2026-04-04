@@ -9,6 +9,7 @@ const telegramService = require('../services/telegram_service');
 const logger = require('../utils/logger');
 
 let uploadsColumnCache = null;
+let mediaMetadataColumnCache = null;
 
 async function getUploadsColumns() {
   if (uploadsColumnCache) {
@@ -20,13 +21,42 @@ async function getUploadsColumns() {
   return uploadsColumnCache;
 }
 
+async function getMediaMetadataColumns() {
+  if (mediaMetadataColumnCache) {
+    return mediaMetadataColumnCache;
+  }
+
+  const [rows] = await db.promise().query('SHOW COLUMNS FROM media_metadata');
+  mediaMetadataColumnCache = new Set(rows.map((row) => row.Field));
+  return mediaMetadataColumnCache;
+}
+
+async function buildMediaMetadataSelect(prefix = 'mm') {
+  const columns = await getMediaMetadataColumns();
+  const pick = (column) =>
+    columns.has(column) ? `${prefix}.${column}` : `NULL AS ${column}`;
+
+  return [
+    pick('event_name'),
+    pick('description'),
+    pick('speaker_name'),
+    pick('sermon_topic'),
+    pick('service_date'),
+    pick('location'),
+    pick('content_category'),
+    pick('upload_to_telegram'),
+    pick('upload_to_youtube'),
+    pick('youtube_schedule_at'),
+  ].join(',\n            ');
+}
+
 // ─── Internal helper: process one media upload ────────────────
 async function triggerUploadByMediaId(mediaId, actor = 'system') {
   logger.media('TRIGGER', '?', mediaId, `by ${actor}`);
+  const metadataSelect = await buildMediaMetadataSelect();
 
   const [mediaRows] = await db.promise().query(
-    `SELECT m.*, mm.event_name, mm.description, mm.speaker_name,
-            mm.sermon_topic, mm.service_date, mm.location
+    `SELECT m.*, ${metadataSelect}
      FROM media m
      LEFT JOIN media_metadata mm ON m.id = mm.media_id
      WHERE m.id = ?`,
@@ -83,9 +113,9 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
     };
   }
 
-  const shouldUploadYouTube = mediaType !== 'photo' && pendingPlatforms.includes('youtube');
-  const shouldMarkPhotoYouTubeSuccess =
-    mediaType === 'photo' && pendingPlatforms.includes('youtube');
+  const shouldUploadYouTube = mediaType === 'video' && pendingPlatforms.includes('youtube');
+  const shouldMarkSkippedYouTubeSuccess =
+    mediaType !== 'video' && pendingPlatforms.includes('youtube');
   const shouldUploadTelegram = pendingPlatforms.includes('telegram');
 
   await db.promise().query(
@@ -93,7 +123,7 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
     [mediaId]
   );
 
-  if (shouldUploadYouTube || shouldMarkPhotoYouTubeSuccess) {
+  if (shouldUploadYouTube || shouldMarkSkippedYouTubeSuccess) {
     await db.promise().query(
       `UPDATE uploads
        SET upload_status = 'in_progress',
@@ -157,8 +187,8 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
         [err.message, mediaId]
       );
     }
-  } else if (shouldMarkPhotoYouTubeSuccess) {
-    // photos skip YouTube for now
+  } else if (shouldMarkSkippedYouTubeSuccess) {
+    // photos and audio skip YouTube by design
     await db.promise().query(
       `UPDATE uploads
        SET upload_status = 'success',
@@ -250,7 +280,7 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
 
   logger.media('COMPLETE', mediaType, mediaId, `final status: ${finalStatus}`);
 
-  if (!ytError && mediaType !== 'photo') {
+  if (!ytError && mediaType === 'video') {
     setTimeout(async () => {
       try {
         await youtubeService.fetchChannelVideos();
@@ -275,6 +305,7 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
 exports.getUploadQueue = async (req, res, next) => {
   logger.info(`UPLOADS | getUploadQueue | by ${req.user?.email}`);
   try {
+    const metadataSelect = await buildMediaMetadataSelect();
     const [rows] = await db.promise().query(
       `SELECT
          u.id, u.media_id, u.platform, u.upload_status,
@@ -283,7 +314,7 @@ exports.getUploadQueue = async (req, res, next) => {
          u.created_at,
          m.type, m.title, m.file_path, m.status AS media_status,
          m.thumbnail_url,
-         mm.event_name, mm.speaker_name, mm.sermon_topic
+         ${metadataSelect}
        FROM uploads u
        JOIN media m ON u.media_id = m.id
        LEFT JOIN media_metadata mm ON m.id = mm.media_id
@@ -511,10 +542,11 @@ exports.getSavedVideos = async (req, res, next) => {
   logger.info(`UPLOADS | getSavedVideos | user:${userId}`);
 
   try {
+    const metadataSelect = await buildMediaMetadataSelect('mm');
     const [rows] = await db.promise().query(
       `SELECT sv.*, m.type, m.status AS media_status,
               up.youtube_link, up.telegram_msg_id,
-              mm.event_name, mm.speaker_name, mm.sermon_topic
+              ${metadataSelect}
        FROM saved_videos sv
        LEFT JOIN media m ON sv.media_id = m.id
        LEFT JOIN uploads up ON m.id = up.media_id AND up.platform = 'youtube'

@@ -19,6 +19,7 @@ const CONTENT_TYPES = {
 };
 
 let uploadsColumnCache = null;
+let mediaMetadataColumnCache = null;
 
 async function getUploadsColumns() {
   if (uploadsColumnCache) {
@@ -28,6 +29,48 @@ async function getUploadsColumns() {
   const [rows] = await db.promise().query('SHOW COLUMNS FROM uploads');
   uploadsColumnCache = new Set(rows.map((row) => row.Field));
   return uploadsColumnCache;
+}
+
+async function getMediaMetadataColumns() {
+  if (mediaMetadataColumnCache) {
+    return mediaMetadataColumnCache;
+  }
+
+  const [rows] = await db.promise().query('SHOW COLUMNS FROM media_metadata');
+  mediaMetadataColumnCache = new Set(rows.map((row) => row.Field));
+  return mediaMetadataColumnCache;
+}
+
+function parseBoolean(value, fallback = false) {
+  if (value === undefined || value === null || value === '') {
+    return fallback;
+  }
+
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+
+  const text = String(value).trim().toLowerCase();
+  return text === '1' || text === 'true' || text === 'yes' || text === 'on';
+}
+
+async function buildMediaMetadataSelect(prefix = 'mm') {
+  const columns = await getMediaMetadataColumns();
+  const pick = (column) =>
+    columns.has(column) ? `${prefix}.${column}` : `NULL AS ${column}`;
+
+  return [
+    pick('event_name'),
+    pick('location'),
+    pick('description'),
+    pick('participants'),
+    pick('speaker_name'),
+    pick('sermon_topic'),
+    pick('service_date'),
+    pick('content_category'),
+    pick('upload_to_telegram'),
+    pick('upload_to_youtube'),
+    pick('youtube_schedule_at'),
+  ].join(',\n        ');
 }
 
 function streamLocalFile({ filePath, wantsDownload, res }) {
@@ -54,6 +97,7 @@ exports.getAllMedia = async (req, res, next) => {
 
   try {
     const offset = (parseInt(page) - 1) * parseInt(limit);
+    const metadataSelect = await buildMediaMetadataSelect();
 
     let query = `
       SELECT
@@ -64,12 +108,7 @@ exports.getAllMedia = async (req, res, next) => {
         m.status,
         m.created_at,
         u.name AS uploaded_by_name,
-        mm.event_name,
-        mm.location,
-        mm.description,
-        mm.speaker_name,
-        mm.sermon_topic,
-        mm.service_date,
+        ${metadataSelect},
         up_yt.youtube_link,
         up_yt.youtube_video_id,
         up_tg.telegram_msg_id
@@ -124,6 +163,7 @@ exports.getMediaById = async (req, res, next) => {
   logger.info(`MEDIA | getMediaById | id:${id}`);
 
   try {
+    const metadataSelect = await buildMediaMetadataSelect();
     const [rows] = await db.promise().query(
       `SELECT
         m.id,
@@ -134,13 +174,7 @@ exports.getMediaById = async (req, res, next) => {
         m.status,
         m.created_at,
         u.name AS uploaded_by_name,
-        mm.event_name,
-        mm.location,
-        mm.description,
-        mm.participants,
-        mm.speaker_name,
-        mm.sermon_topic,
-        mm.service_date,
+        ${metadataSelect},
         up_yt.youtube_link,
         up_yt.youtube_video_id,
         up_tg.telegram_msg_id
@@ -270,6 +304,9 @@ exports.createMedia = async (req, res, next) => {
   try {
     const { type, title } = req.body;
     const metadataRaw = req.body.metadata;
+    const uploadPlatformsRaw = req.body.upload_platforms;
+    const explicitCategory = req.body.content_category;
+    const explicitScheduleAt = req.body.youtube_schedule_at;
 
     if (!type || !['video', 'photo', 'audio'].includes(type)) {
       return res.status(400).json({
@@ -288,6 +325,50 @@ exports.createMedia = async (req, res, next) => {
     const metadata = typeof metadataRaw === 'string'
       ? JSON.parse(metadataRaw)
       : (metadataRaw || {});
+    const requestedPlatforms = (() => {
+      if (Array.isArray(uploadPlatformsRaw)) return uploadPlatformsRaw;
+      if (typeof uploadPlatformsRaw === 'string' && uploadPlatformsRaw.trim()) {
+        try {
+          return JSON.parse(uploadPlatformsRaw);
+        } catch (_) {
+          return uploadPlatformsRaw.split(',').map((item) => item.trim()).filter(Boolean);
+        }
+      }
+      return [];
+    })();
+    const normalisedPlatforms = [...new Set(
+      requestedPlatforms
+        .map((platform) => String(platform).trim().toLowerCase())
+        .filter((platform) => platform === 'telegram' || platform === 'youtube')
+    )];
+
+    let uploadPlatforms;
+    if (type === 'photo' || type === 'audio') {
+      uploadPlatforms = ['telegram'];
+    } else {
+      uploadPlatforms = normalisedPlatforms.length
+        ? normalisedPlatforms
+        : ['telegram', 'youtube'];
+    }
+
+    if (!uploadPlatforms.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Select at least one platform for this media upload',
+      });
+    }
+
+    const metadataColumns = await getMediaMetadataColumns();
+    const contentCategory = explicitCategory || metadata.content_category || null;
+    const uploadToTelegram = type === 'photo' || type === 'audio'
+      ? true
+      : parseBoolean(metadata.upload_to_telegram, uploadPlatforms.includes('telegram'));
+    const uploadToYouTube = type === 'video'
+      ? parseBoolean(metadata.upload_to_youtube, uploadPlatforms.includes('youtube'))
+      : false;
+    const youtubeScheduleAt = type === 'video'
+      ? (explicitScheduleAt || metadata.youtube_schedule_at || null)
+      : null;
 
     const serverFilePath = req.file.path;
 
@@ -303,45 +384,55 @@ exports.createMedia = async (req, res, next) => {
 
     const mediaId = result.insertId;
 
-    await db.promise().query(
-      `INSERT INTO media_metadata
-       (media_id, event_name, location, description, participants, speaker_name, sermon_topic, service_date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        mediaId,
-        metadata.event_name || null,
-        metadata.location || null,
-        metadata.description || null,
-        metadata.participants || null,
-        metadata.speaker_name || null,
-        metadata.sermon_topic || null,
-        metadata.service_date || null,
-      ]
-    );
+    const metadataFields = [
+      ['media_id', mediaId],
+      ['event_name', metadata.event_name || null],
+      ['location', metadata.location || null],
+      ['description', metadata.description || null],
+      ['participants', metadata.participants || null],
+      ['speaker_name', metadata.speaker_name || null],
+      ['sermon_topic', metadata.sermon_topic || null],
+      ['service_date', metadata.service_date || null],
+    ];
+
+    if (metadataColumns.has('content_category')) {
+      metadataFields.push(['content_category', contentCategory]);
+    }
+    if (metadataColumns.has('upload_to_telegram')) {
+      metadataFields.push(['upload_to_telegram', uploadToTelegram ? 1 : 0]);
+    }
+    if (metadataColumns.has('upload_to_youtube')) {
+      metadataFields.push(['upload_to_youtube', uploadToYouTube ? 1 : 0]);
+    }
+    if (metadataColumns.has('youtube_schedule_at')) {
+      metadataFields.push(['youtube_schedule_at', youtubeScheduleAt]);
+    }
 
     await db.promise().query(
+      `INSERT INTO media_metadata
+       (${metadataFields.map(([column]) => column).join(', ')})
+       VALUES (${metadataFields.map(() => '?').join(', ')})`,
+      metadataFields.map(([, value]) => value)
+    );
+
+    const uploadRows = uploadPlatforms.map((platform) => [mediaId, platform, 'pending']);
+    await db.promise().query(
       `INSERT INTO uploads (media_id, platform, upload_status)
-       VALUES (?, 'telegram', 'pending'), (?, 'youtube', 'pending')`,
-      [mediaId, mediaId]
+       VALUES ?`,
+      [uploadRows]
     );
 
     await db.promise().query(
       'INSERT INTO logs (action, user_id, details) VALUES (?, ?, ?)',
       ['MEDIA_CREATED', req.user.id, `${type} media created: ${title || 'Untitled'}`]
     );
-
-    
-
-const uploadController = require('./upload_controller');
-
-console.log('🚀 ABOUT TO TRIGGER UPLOAD for media:', mediaId);
-
-try {
-  await uploadController.triggerUploadByMediaId(mediaId);
-  console.log('✅ UPLOAD TRIGGERED SUCCESSFULLY for media:', mediaId);
-} catch (err) {
-  console.error('❌ UPLOAD TRIGGER FAILED:', err.message);
-}
+    const uploadController = require('./upload_controller');
+    try {
+      await uploadController.triggerUploadByMediaId(mediaId);
+      logger.info(`MEDIA | auto-triggered upload for media:${mediaId}`);
+    } catch (err) {
+      logger.error(`MEDIA | auto-trigger failed for media:${mediaId} | ${err.message}`);
+    }
 
     return res.status(201).json({
       success: true,
@@ -360,6 +451,7 @@ exports.updateMedia = async (req, res, next) => {
 
   try {
     const { title, metadata } = req.body;
+    const metadataColumns = await getMediaMetadataColumns();
 
     if (title) {
       await db.promise().query(
@@ -369,21 +461,47 @@ exports.updateMedia = async (req, res, next) => {
     }
 
     if (metadata) {
+      const setParts = [
+        'event_name = ?',
+        'location = ?',
+        'description = ?',
+        'participants = ?',
+        'speaker_name = ?',
+        'sermon_topic = ?',
+        'service_date = ?',
+      ];
+      const params = [
+        metadata.event_name || null,
+        metadata.location || null,
+        metadata.description || null,
+        metadata.participants || null,
+        metadata.speaker_name || null,
+        metadata.sermon_topic || null,
+        metadata.service_date || null,
+      ];
+
+      if (metadataColumns.has('content_category')) {
+        setParts.push('content_category = ?');
+        params.push(metadata.content_category || null);
+      }
+      if (metadataColumns.has('upload_to_telegram')) {
+        setParts.push('upload_to_telegram = ?');
+        params.push(metadata.upload_to_telegram == null ? null : (parseBoolean(metadata.upload_to_telegram) ? 1 : 0));
+      }
+      if (metadataColumns.has('upload_to_youtube')) {
+        setParts.push('upload_to_youtube = ?');
+        params.push(metadata.upload_to_youtube == null ? null : (parseBoolean(metadata.upload_to_youtube) ? 1 : 0));
+      }
+      if (metadataColumns.has('youtube_schedule_at')) {
+        setParts.push('youtube_schedule_at = ?');
+        params.push(metadata.youtube_schedule_at || null);
+      }
+
       await db.promise().query(
         `UPDATE media_metadata
-         SET event_name = ?, location = ?, description = ?, participants = ?,
-             speaker_name = ?, sermon_topic = ?, service_date = ?
+         SET ${setParts.join(', ')}
          WHERE media_id = ?`,
-        [
-          metadata.event_name || null,
-          metadata.location || null,
-          metadata.description || null,
-          metadata.participants || null,
-          metadata.speaker_name || null,
-          metadata.sermon_topic || null,
-          metadata.service_date || null,
-          id
-        ]
+        [...params, id]
       );
     }
 
@@ -424,11 +542,11 @@ exports.deleteMedia = async (req, res, next) => {
 // ─── ADMIN QUEUE ──────────────────────────────────────────────
 exports.getAdminQueue = async (req, res, next) => {
   try {
+    const metadataSelect = await buildMediaMetadataSelect();
     const [rows] = await db.promise().query(
       `SELECT
         m.*,
-        mm.event_name,
-        mm.speaker_name,
+        ${metadataSelect},
         up_yt.upload_status AS youtube_status,
         up_yt.youtube_link,
         up_tg.upload_status AS telegram_status,
