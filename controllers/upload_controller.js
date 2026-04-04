@@ -26,10 +26,10 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
   }
 
   const media = mediaRows[0];
-  logger.info(`TRIGGER | Found media: type=${media.type || media.media_type} title=${media.title} path=${media.file_path}`);
-
-  await db.promise().query('UPDATE media SET status = "uploading" WHERE id = ?', [mediaId]);
-  await db.promise().query('UPDATE uploads SET upload_status = "in_progress", error_message = NULL WHERE media_id = ?', [mediaId]);
+   logger.info(`TRIGGER | Found media: type=${media.type} title=${media.title} path=${media.file_path}`);
+  const mediaType = media.type;
+  await db.promise().query("UPDATE media SET status = 'uploading' WHERE id = ?", [mediaId]);
+  await db.promise().query("UPDATE uploads SET upload_status = 'in_progress', error_message = NULL WHERE media_id = ?", [mediaId]);
 
   let youtubeLink    = null;
   let youtubeVideoId = null;
@@ -37,7 +37,7 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
   let ytError        = null;
   let tgError        = null;
 
-  const mediaType = media.type || media.media_type;
+  
 
   // ── YouTube Upload (videos and audio only) ────────────────
   if (mediaType !== 'photo') {
@@ -134,7 +134,7 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
       : 'uploading';
 
   await db.promise().query(
-    'UPDATE media SET status = ? WHERE id = ?',
+    "UPDATE media SET status = 'failed' WHERE id = ?",
     [finalStatus, mediaId]
   );
 
@@ -226,7 +226,7 @@ exports.updateUploadStatus = async (req, res, next) => {
     const newStatus  = allSuccess ? 'uploaded' : anyFailed ? 'failed' : 'uploading';
 
     await db.promise().query(
-      'UPDATE media SET status = ? WHERE id = ?',
+      '"UPDATE media SET status = 'failed' WHERE id = ?",
       [newStatus, mediaId]
     );
 
@@ -255,7 +255,7 @@ exports.triggerUpload = async (req, res, next) => {
       } catch (err) {
         logger.error(`triggerUpload background error | media:${mediaId} | ${err.message}`);
         await db.promise().query(
-          'UPDATE media SET status = "failed" WHERE id = ?',
+          "UPDATE media SET status = 'failed' WHERE id = ?",
           [mediaId]
         ).catch(() => {});
       }
@@ -285,10 +285,10 @@ exports.retryFailedUploads = async () => {
 
     for (const row of failedMediaRows) {
       try {
-        await db.promise().query(
-          'UPDATE uploads SET retry_count = retry_count + 1 WHERE media_id = ? AND upload_status = "failed"',
-          [row.media_id]
-        );
+       await db.promise().query(
+        "UPDATE uploads SET retry_count = retry_count + 1 WHERE media_id = ? AND upload_status = 'failed'",
+        [row.media_id]
+      );
         await triggerUploadByMediaId(row.media_id, 'retry-cron');
       } catch (err) {
         logger.error(`RETRY_FAIL | media:${row.media_id} | ${err.message}`);
