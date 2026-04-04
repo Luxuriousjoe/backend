@@ -1,6 +1,7 @@
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const config = require('../config/app_config');
 
 const uploadDir = path.join(process.cwd(), 'uploads_tmp');
 if (!fs.existsSync(uploadDir)) {
@@ -19,7 +20,7 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   limits: {
-    fileSize: 1024 * 1024 * 1024, // 1GB
+    fileSize: (config.upload.maxFileSizeMB || 4096) * 1024 * 1024,
   },
 });
 

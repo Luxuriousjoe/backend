@@ -20,6 +20,6 @@ module.exports = {
     refreshExpires: process.env.JWT_REFRESH_EXPIRES_IN || '30d',
   },
   upload: {
-    maxFileSizeMB: parseInt(process.env.MAX_FILE_SIZE_MB) || 500,
+    maxFileSizeMB: parseInt(process.env.MAX_FILE_SIZE_MB) || 4096,
   },
 };
