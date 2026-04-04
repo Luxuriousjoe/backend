@@ -3,10 +3,10 @@
 //  Handles: queue display, upload triggering, retry, saved videos,
 //           YouTube channel video caching
 // ═══════════════════════════════════════════════════════════════
-const db              = require('../config/db_config');
-const youtubeService  = require('../services/youtube_service');
+const db = require('../config/db_config');
+const youtubeService = require('../services/youtube_service');
 const telegramService = require('../services/telegram_service');
-const logger          = require('../utils/logger');
+const logger = require('../utils/logger');
 
 // ─── Internal helper: process one media upload ────────────────
 async function triggerUploadByMediaId(mediaId, actor = 'system') {
@@ -26,26 +26,33 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
   }
 
   const media = mediaRows[0];
-   logger.info(`TRIGGER | Found media: type=${media.type} title=${media.title} path=${media.file_path}`);
+  logger.info(`TRIGGER | Found media: type=${media.type} title=${media.title} path=${media.file_path}`);
+
   const mediaType = media.type;
-  await db.promise().query("UPDATE media SET status = 'uploading' WHERE id = ?", [mediaId]);
-  await db.promise().query("UPDATE uploads SET upload_status = 'in_progress', error_message = NULL WHERE media_id = ?", [mediaId]);
 
-  let youtubeLink    = null;
+  await db.promise().query(
+    "UPDATE media SET status = 'uploading' WHERE id = ?",
+    [mediaId]
+  );
+
+  await db.promise().query(
+    "UPDATE uploads SET upload_status = 'in_progress', error_message = NULL WHERE media_id = ?",
+    [mediaId]
+  );
+
+  let youtubeLink = null;
   let youtubeVideoId = null;
-  let telegramMsgId  = null;
-  let ytError        = null;
-  let tgError        = null;
-
-  
+  let telegramMsgId = null;
+  let ytError = null;
+  let tgError = null;
 
   // ── YouTube Upload (videos and audio only) ────────────────
   if (mediaType !== 'photo') {
     try {
       logger.media('YT_START', mediaType, mediaId, 'uploading to YouTube...');
-      const ytResult  = await youtubeService.uploadMedia(media);
-      youtubeLink     = ytResult.link;
-      youtubeVideoId  = ytResult.videoId;
+      const ytResult = await youtubeService.uploadMedia(media);
+      youtubeLink = ytResult.link;
+      youtubeVideoId = ytResult.videoId;
 
       await db.promise().query(
         `UPDATE uploads
@@ -68,6 +75,7 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
     } catch (err) {
       ytError = err.message;
       logger.error(`YT_FAIL | media:${mediaId} | ${err.message}`);
+
       await db.promise().query(
         `UPDATE uploads
          SET upload_status = 'failed',
@@ -92,8 +100,8 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
   try {
     logger.media('TG_START', mediaType, mediaId, 'sending to Telegram...');
     const mediaWithLink = { ...media, youtube_link: youtubeLink };
-    const tgResult      = await telegramService.sendMedia(mediaWithLink);
-    telegramMsgId       = tgResult.messageId;
+    const tgResult = await telegramService.sendMedia(mediaWithLink);
+    telegramMsgId = tgResult.messageId;
 
     await db.promise().query(
       `UPDATE uploads
@@ -109,6 +117,7 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
   } catch (err) {
     tgError = err.message;
     logger.error(`TG_FAIL | media:${mediaId} | ${err.message}`);
+
     await db.promise().query(
       `UPDATE uploads
        SET upload_status = 'failed',
@@ -124,8 +133,8 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
     [mediaId]
   );
 
-  const allSuccess = uploads.every(u => u.upload_status === 'success');
-  const anyFailed  = uploads.some(u => u.upload_status === 'failed');
+  const allSuccess = uploads.every((u) => u.upload_status === 'success');
+  const anyFailed = uploads.some((u) => u.upload_status === 'failed');
 
   const finalStatus = allSuccess
     ? 'uploaded'
@@ -134,7 +143,7 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
       : 'uploading';
 
   await db.promise().query(
-    "UPDATE media SET status = 'failed' WHERE id = ?",
+    'UPDATE media SET status = ? WHERE id = ?',
     [finalStatus, mediaId]
   );
 
@@ -180,6 +189,7 @@ exports.getUploadQueue = async (req, res, next) => {
        ORDER BY u.created_at DESC
        LIMIT 100`
     );
+
     logger.db('SELECT', 'uploads', `returned ${rows.length} records`);
     return res.json({ success: true, data: rows });
   } catch (err) {
@@ -191,7 +201,15 @@ exports.getUploadQueue = async (req, res, next) => {
 // ─── UPDATE Upload Status ─────────────────────────────────────
 exports.updateUploadStatus = async (req, res, next) => {
   const { mediaId } = req.params;
-  const { platform, upload_status, telegram_msg_id, youtube_link, youtube_video_id, error_message } = req.body;
+  const {
+    platform,
+    upload_status,
+    telegram_msg_id,
+    youtube_link,
+    youtube_video_id,
+    error_message,
+  } = req.body;
+
   logger.info(`UPLOADS | updateStatus | media:${mediaId} platform:${platform} → ${upload_status}`);
 
   try {
@@ -206,27 +224,27 @@ exports.updateUploadStatus = async (req, res, next) => {
        WHERE media_id = ? AND platform = ?`,
       [
         upload_status,
-        telegram_msg_id  || null,
-        youtube_link     || null,
+        telegram_msg_id || null,
+        youtube_link || null,
         youtube_video_id || null,
-        error_message    || null,
+        error_message || null,
         upload_status,
         mediaId,
-        platform
+        platform,
       ]
     );
 
-    const [uploads]  = await db.promise().query(
+    const [uploads] = await db.promise().query(
       'SELECT platform, upload_status FROM uploads WHERE media_id = ?',
       [mediaId]
     );
 
-    const allSuccess = uploads.every(u => u.upload_status === 'success');
-    const anyFailed  = uploads.some(u => u.upload_status === 'failed');
-    const newStatus  = allSuccess ? 'uploaded' : anyFailed ? 'failed' : 'uploading';
+    const allSuccess = uploads.every((u) => u.upload_status === 'success');
+    const anyFailed = uploads.some((u) => u.upload_status === 'failed');
+    const newStatus = allSuccess ? 'uploaded' : anyFailed ? 'failed' : 'uploading';
 
     await db.promise().query(
-      '"UPDATE media SET status = 'failed' WHERE id = ?",
+      'UPDATE media SET status = ? WHERE id = ?',
       [newStatus, mediaId]
     );
 
@@ -246,7 +264,7 @@ exports.triggerUpload = async (req, res, next) => {
     res.json({
       success: true,
       message: 'Upload started',
-      data: { mediaId: Number(mediaId) }
+      data: { mediaId: Number(mediaId) },
     });
 
     setImmediate(async () => {
@@ -285,10 +303,11 @@ exports.retryFailedUploads = async () => {
 
     for (const row of failedMediaRows) {
       try {
-       await db.promise().query(
-        "UPDATE uploads SET retry_count = retry_count + 1 WHERE media_id = ? AND upload_status = 'failed'",
-        [row.media_id]
-      );
+        await db.promise().query(
+          "UPDATE uploads SET retry_count = retry_count + 1 WHERE media_id = ? AND upload_status = 'failed'",
+          [row.media_id]
+        );
+
         await triggerUploadByMediaId(row.media_id, 'retry-cron');
       } catch (err) {
         logger.error(`RETRY_FAIL | media:${row.media_id} | ${err.message}`);
@@ -316,7 +335,11 @@ exports.refreshChannelVideos = async (req, res, next) => {
   logger.info(`UPLOADS | refreshChannelVideos | by ${req.user?.email}`);
   try {
     const videos = await youtubeService.fetchChannelVideos();
-    return res.json({ success: true, message: `Fetched ${videos.length} videos`, data: videos });
+    return res.json({
+      success: true,
+      message: `Fetched ${videos.length} videos`,
+      data: videos,
+    });
   } catch (err) {
     logger.error('refreshChannelVideos error:', err.message);
     next(err);
@@ -328,6 +351,7 @@ exports.saveVideo = async (req, res, next) => {
   const userId = req.user.id;
   const { media_id, video_id, title, thumbnail_url, youtube_url } = req.body;
   logger.info(`UPLOADS | saveVideo | user:${userId} media:${media_id} ytVid:${video_id}`);
+
   try {
     if (!media_id && !video_id) {
       return res.status(400).json({ success: false, message: 'media_id or video_id required' });
@@ -337,7 +361,14 @@ exports.saveVideo = async (req, res, next) => {
       `INSERT INTO saved_videos (user_id, media_id, video_id, title, thumbnail_url, youtube_url)
        VALUES (?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE saved_at = NOW()`,
-      [userId, media_id || null, video_id || null, title || null, thumbnail_url || null, youtube_url || null]
+      [
+        userId,
+        media_id || null,
+        video_id || null,
+        title || null,
+        thumbnail_url || null,
+        youtube_url || null,
+      ]
     );
 
     logger.info(`UPLOADS | Video saved for user:${userId}`);
@@ -352,6 +383,7 @@ exports.saveVideo = async (req, res, next) => {
 exports.unsaveVideo = async (req, res, next) => {
   const userId = req.user.id;
   const { media_id, video_id } = req.body;
+
   try {
     if (media_id) {
       await db.promise().query(
@@ -364,6 +396,7 @@ exports.unsaveVideo = async (req, res, next) => {
         [userId, video_id]
       );
     }
+
     return res.json({ success: true, message: 'Removed from saved' });
   } catch (err) {
     logger.error('unsaveVideo error:', err.message);
@@ -375,6 +408,7 @@ exports.unsaveVideo = async (req, res, next) => {
 exports.getSavedVideos = async (req, res, next) => {
   const userId = req.user.id;
   logger.info(`UPLOADS | getSavedVideos | user:${userId}`);
+
   try {
     const [rows] = await db.promise().query(
       `SELECT sv.*, m.type, m.status AS media_status,
@@ -388,6 +422,7 @@ exports.getSavedVideos = async (req, res, next) => {
        ORDER BY sv.saved_at DESC`,
       [userId]
     );
+
     return res.json({ success: true, data: rows });
   } catch (err) {
     logger.error('getSavedVideos error:', err.message);
