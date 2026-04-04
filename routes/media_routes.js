@@ -7,6 +7,7 @@ const upload = require('../middleware/upload_middleware');
 
 router.get('/', authMiddleware, mediaController.getAllMedia);
 router.get('/queue/admin', adminMiddleware, mediaController.getAdminQueue);
+router.get('/:id/file', authMiddleware, mediaController.streamMediaFile);
 router.get('/:id', authMiddleware, mediaController.getMediaById);
 
 router.post('/', adminMiddleware, upload.single('file'), mediaController.createMedia);

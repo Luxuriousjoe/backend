@@ -1,5 +1,21 @@
+const fs = require('fs');
+const path = require('path');
 const db = require('../config/db_config');
 const logger = require('../utils/logger');
+
+const CONTENT_TYPES = {
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.mp4': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+};
 
 // ─── GET ALL MEDIA ────────────────────────────────────────────
 exports.getAllMedia = async (req, res, next) => {
@@ -114,6 +130,66 @@ exports.getMediaById = async (req, res, next) => {
     return res.json({ success: true, data: rows[0] });
   } catch (err) {
     logger.error('getMediaById error:', err.message);
+    next(err);
+  }
+};
+
+exports.streamMediaFile = async (req, res, next) => {
+  const { id } = req.params;
+  const wantsDownload = req.query.download === '1';
+
+  try {
+    const [rows] = await db.promise().query(
+      `SELECT id, type, file_path, title
+       FROM media
+       WHERE id = ?`,
+      [id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Media not found' });
+    }
+
+    const media = rows[0];
+    if (!media.file_path || !fs.existsSync(media.file_path)) {
+      return res.status(404).json({ success: false, message: 'Media file not available' });
+    }
+
+    const stat = fs.statSync(media.file_path);
+    const fileSize = stat.size;
+    const extension = path.extname(media.file_path).toLowerCase();
+    const contentType = CONTENT_TYPES[extension] || 'application/octet-stream';
+    const fileName = path.basename(media.file_path);
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader(
+      'Content-Disposition',
+      `${wantsDownload ? 'attachment' : 'inline'}; filename="${fileName}"`
+    );
+
+    const range = req.headers.range;
+    if (range) {
+      const [startText, endText] = range.replace(/bytes=/, '').split('-');
+      const start = Number.parseInt(startText, 10);
+      const end = endText ? Number.parseInt(endText, 10) : fileSize - 1;
+
+      if (Number.isNaN(start) || Number.isNaN(end) || start > end || end >= fileSize) {
+        res.status(416).setHeader('Content-Range', `bytes */${fileSize}`);
+        return res.end();
+      }
+
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
+      res.setHeader('Content-Length', end - start + 1);
+      fs.createReadStream(media.file_path, { start, end }).pipe(res);
+      return;
+    }
+
+    res.setHeader('Content-Length', fileSize);
+    fs.createReadStream(media.file_path).pipe(res);
+  } catch (err) {
+    logger.error('streamMediaFile error:', err.message);
     next(err);
   }
 };
