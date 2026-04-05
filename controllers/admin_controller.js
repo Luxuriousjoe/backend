@@ -75,6 +75,32 @@ exports.toggleUser = async (req, res, next) => {
   } catch (err) { logger.error('toggleUser error:', err.message); next(err); }
 };
 
+exports.deleteUser = async (req, res, next) => {
+  const { id } = req.params;
+  try {
+    await db.promise().query('DELETE FROM users WHERE id = ? AND role != "admin"', [id]);
+    return res.json({ success: true, message: 'User deleted' });
+  } catch (err) {
+    logger.error('deleteUser error:', err.message);
+    next(err);
+  }
+};
+
+exports.changeUserPassword = async (req, res, next) => {
+  const { id } = req.params;
+  const { newPassword } = req.body;
+  try {
+    if (!newPassword || String(newPassword).trim().length < 6) {
+      return res.status(400).json({ success: false, message: 'New password must be at least 6 characters' });
+    }
+    await db.promise().query('UPDATE users SET password_hash = ? WHERE id = ?', [newPassword, id]);
+    return res.json({ success: true, message: 'Password updated' });
+  } catch (err) {
+    logger.error('changeUserPassword error:', err.message);
+    next(err);
+  }
+};
+
 exports.getLogs = async (req, res, next) => {
   const { page = 1, limit = 50 } = req.query;
   logger.info(`ADMIN | getLogs | page:${page} by ${req.user?.email}`);

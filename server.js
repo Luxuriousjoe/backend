@@ -19,6 +19,7 @@ const authRoutes   = require('./routes/auth_routes');
 const mediaRoutes  = require('./routes/media_routes');
 const uploadRoutes = require('./routes/upload_routes');
 const adminRoutes  = require('./routes/admin_routes');
+const timelyReflectionRoutes = require('./routes/timely_reflection_routes');
 
 const app  = express();
 const PORT = process.env.PORT || 5000;
@@ -73,6 +74,7 @@ app.use('/api/auth',    authRoutes);
 app.use('/api/media',   mediaRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/admin',   adminRoutes);
+app.use('/api/timely-reflections', timelyReflectionRoutes);
 
 // ─── 404 ──────────────────────────────────────────────────────
 app.use('*', (req, res) => {

@@ -70,6 +70,10 @@ async function buildMediaMetadataSelect(prefix = 'mm') {
     pick('upload_to_telegram'),
     pick('upload_to_youtube'),
     pick('youtube_schedule_at'),
+    pick('featured_enabled'),
+    pick('featured_candidate'),
+    pick('featured_until'),
+    pick('view_count'),
   ].join(',\n        ');
 }
 
@@ -407,6 +411,23 @@ exports.createMedia = async (req, res, next) => {
     if (metadataColumns.has('youtube_schedule_at')) {
       metadataFields.push(['youtube_schedule_at', youtubeScheduleAt]);
     }
+    if (metadataColumns.has('featured_enabled')) {
+      metadataFields.push(['featured_enabled', parseBoolean(metadata.featured_enabled, false) ? 1 : 0]);
+    }
+    if (metadataColumns.has('featured_candidate')) {
+      metadataFields.push(['featured_candidate', parseBoolean(metadata.featured_candidate, false) ? 1 : 0]);
+    }
+    if (metadataColumns.has('featured_until')) {
+      metadataFields.push([
+        'featured_until',
+        parseBoolean(metadata.featured_enabled, false)
+          ? new Date(Date.now() + 24 * 60 * 60 * 1000)
+          : null,
+      ]);
+    }
+    if (metadataColumns.has('view_count')) {
+      metadataFields.push(['view_count', 0]);
+    }
 
     await db.promise().query(
       `INSERT INTO media_metadata
@@ -496,6 +517,22 @@ exports.updateMedia = async (req, res, next) => {
         setParts.push('youtube_schedule_at = ?');
         params.push(metadata.youtube_schedule_at || null);
       }
+      if (metadataColumns.has('featured_enabled')) {
+        setParts.push('featured_enabled = ?');
+        params.push(metadata.featured_enabled == null ? null : (parseBoolean(metadata.featured_enabled) ? 1 : 0));
+      }
+      if (metadataColumns.has('featured_candidate')) {
+        setParts.push('featured_candidate = ?');
+        params.push(metadata.featured_candidate == null ? null : (parseBoolean(metadata.featured_candidate) ? 1 : 0));
+      }
+      if (metadataColumns.has('featured_until')) {
+        setParts.push('featured_until = ?');
+        params.push(
+          parseBoolean(metadata.featured_enabled, false)
+            ? new Date(Date.now() + 24 * 60 * 60 * 1000)
+            : null
+        );
+      }
 
       await db.promise().query(
         `UPDATE media_metadata
@@ -582,6 +619,23 @@ exports.updateThumbnail = async (req, res, next) => {
     return res.json({ success: true, message: 'Thumbnail updated' });
   } catch (err) {
     logger.error('updateThumbnail error:', err.message);
+    next(err);
+  }
+};
+
+exports.recordVisit = async (req, res, next) => {
+  const { id } = req.params;
+  try {
+    const metadataColumns = await getMediaMetadataColumns();
+    if (metadataColumns.has('view_count')) {
+      await db.promise().query(
+        'UPDATE media_metadata SET view_count = COALESCE(view_count, 0) + 1 WHERE media_id = ?',
+        [id]
+      );
+    }
+    return res.json({ success: true, message: 'Visit recorded' });
+  } catch (err) {
+    logger.error('recordVisit error:', err.message);
     next(err);
   }
 };
