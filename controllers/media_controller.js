@@ -639,3 +639,20 @@ exports.recordVisit = async (req, res, next) => {
     next(err);
   }
 };
+
+exports.recordYouTubeWatch = async (req, res, next) => {
+  const { id } = req.params;
+  try {
+    const metadataColumns = await getMediaMetadataColumns();
+    if (metadataColumns.has('view_count')) {
+      await db.promise().query(
+        'UPDATE media_metadata SET view_count = COALESCE(view_count, 0) + 1 WHERE media_id = ?',
+        [id]
+      );
+    }
+    return res.json({ success: true, message: 'YouTube watch recorded' });
+  } catch (err) {
+    logger.error('recordYouTubeWatch error:', err.message);
+    next(err);
+  }
+};

@@ -101,6 +101,24 @@ exports.changeUserPassword = async (req, res, next) => {
   }
 };
 
+exports.updateUser = async (req, res, next) => {
+  const { id } = req.params;
+  const { name, email, role } = req.body;
+  try {
+    if (!name || !email || !role) {
+      return res.status(400).json({ success: false, message: 'name, email, and role are required' });
+    }
+    await db.promise().query(
+      'UPDATE users SET name = ?, email = ?, role = ? WHERE id = ?',
+      [String(name).trim(), String(email).trim().toLowerCase(), role === 'admin' ? 'admin' : 'user', id]
+    );
+    return res.json({ success: true, message: 'User updated' });
+  } catch (err) {
+    logger.error('updateUser error:', err.message);
+    next(err);
+  }
+};
+
 exports.getLogs = async (req, res, next) => {
   const { page = 1, limit = 50 } = req.query;
   logger.info(`ADMIN | getLogs | page:${page} by ${req.user?.email}`);

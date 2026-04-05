@@ -10,6 +10,7 @@ router.get('/queue/admin', adminMiddleware, mediaController.getAdminQueue);
 router.get('/:id/file', authMiddleware, mediaController.streamMediaFile);
 router.get('/:id', authMiddleware, mediaController.getMediaById);
 router.post('/:id/visit', authMiddleware, mediaController.recordVisit);
+router.post('/:id/youtube-watch', authMiddleware, mediaController.recordYouTubeWatch);
 
 router.post('/', adminMiddleware, upload.single('file'), mediaController.createMedia);
 router.put('/:id', adminMiddleware, mediaController.updateMedia);
