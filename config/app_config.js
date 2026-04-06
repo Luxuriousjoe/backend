@@ -2,6 +2,9 @@
 //  GRACE CHURCH MEDIA — App Config
 // ═══════════════════════════════════════════════════════════════
 module.exports = {
+  app: {
+    publicBaseUrl: (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, ''),
+  },
   youtube: {
     clientId:     process.env.YOUTUBE_CLIENT_ID,
     clientSecret: process.env.YOUTUBE_CLIENT_SECRET,
@@ -11,7 +14,9 @@ module.exports = {
   },
   telegram: {
     botToken:  process.env.TELEGRAM_BOT_TOKEN,
-    channelId: process.env.TELEGRAM_CHANNEL_ID,
+    channelId: process.env.TELEGRAM_CHANNEL_ID || process.env.TELEGRAM_MAIN_PHOTO_CHANNEL_ID || '-1003509207720',
+    mainPhotoChannelId: process.env.TELEGRAM_MAIN_PHOTO_CHANNEL_ID || process.env.TELEGRAM_CHANNEL_ID || '-1003509207720',
+    photoDumpChannelId: process.env.TELEGRAM_PHOTO_DUMP_CHANNEL_ID || '-1003741514843',
   },
   jwt: {
     secret:         process.env.JWT_SECRET       || 'grace_fallback_secret_change_in_prod',

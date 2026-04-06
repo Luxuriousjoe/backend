@@ -6,6 +6,8 @@ const logger = require('../utils/logger');
 
 const getBotToken = () => (config.telegram.botToken || '').trim();
 const getChannelId = () => (config.telegram.channelId || '').trim();
+const getMainPhotoChannelId = () => (config.telegram.mainPhotoChannelId || getChannelId() || '').trim();
+const getPhotoDumpChannelId = () => (config.telegram.photoDumpChannelId || '').trim();
 const BASE_URL = () => `https://api.telegram.org/bot${getBotToken()}`;
 const FILE_BASE_URL = () => `https://api.telegram.org/file/bot${getBotToken()}`;
 
@@ -117,22 +119,22 @@ exports.streamFileToResponse = async ({
   response.data.pipe(res);
 };
 
-exports.sendMedia = async (media) => {
-  const channelId = getChannelId();
+async function sendMediaToChannel(media, channelId, options = {}) {
   const botToken = getBotToken();
+  const resolvedChannelId = (channelId || '').trim();
 
-  if (!channelId || !botToken) {
+  if (!resolvedChannelId || !botToken) {
     throw new Error('Telegram bot token or channel ID not configured');
   }
 
-  logger.info(`TG | Sending ${media.type || media.media_type} to channel: ${channelId}`);
+  logger.info(`TG | Sending ${media.type || media.media_type} to channel: ${resolvedChannelId}`);
 
-  const caption = buildCaption(media);
+  const caption = options.caption || buildCaption(media);
 
   if (!media.file_path || !fs.existsSync(media.file_path)) {
     logger.warn(`TG | File not found at "${media.file_path}" - sending text message`);
     if (media.youtube_link) {
-      return await exports.sendTextMessage(media, media.youtube_link);
+      return await exports.sendTextMessage(media, media.youtube_link, resolvedChannelId);
     }
     throw new Error(`File not found at path: ${media.file_path}`);
   }
@@ -147,7 +149,7 @@ exports.sendMedia = async (media) => {
   const { endpoint, field } = typeMap[mediaType] || typeMap.photo;
 
   const formData = new FormData();
-  formData.append('chat_id', channelId);
+  formData.append('chat_id', resolvedChannelId);
   formData.append('caption', caption);
   formData.append('parse_mode', 'Markdown');
   formData.append(field, fs.createReadStream(media.file_path));
@@ -188,10 +190,61 @@ exports.sendMedia = async (media) => {
     fileUniqueId: fileMeta.fileUniqueId || null,
     filePath,
   };
+}
+
+exports.sendMediaToChannel = sendMediaToChannel;
+
+exports.sendMedia = async (media) => {
+  return sendMediaToChannel(media, getChannelId());
 };
 
-exports.sendTextMessage = async (media, youtubeLink) => {
-  const channelId = getChannelId();
+exports.sendPhotoBundle = async (media) => {
+  if ((media.type || media.media_type) !== 'photo') {
+    throw new Error('sendPhotoBundle is only supported for photo uploads');
+  }
+
+  const mainResult = await sendMediaToChannel(
+    media,
+    getMainPhotoChannelId(),
+  );
+
+  const previewMedia = {
+    ...media,
+    file_path: media.preview_file_path,
+  };
+
+  if (!previewMedia.file_path || !fs.existsSync(previewMedia.file_path)) {
+    throw new Error('Photo preview file not found for dump upload');
+  }
+
+  let previewResult;
+  try {
+    previewResult = await sendMediaToChannel(
+      previewMedia,
+      getPhotoDumpChannelId(),
+      {
+        caption: [
+          `*PHOTO PREVIEW DUMP*`,
+          media.title ? `Title: ${media.title}` : null,
+          `Media ID: ${media.id}`,
+          '',
+          'Share Grace Family Church',
+        ].filter(Boolean).join('\n'),
+      },
+    );
+  } catch (error) {
+    error.mainResult = mainResult;
+    throw error;
+  }
+
+  return {
+    main: mainResult,
+    preview: previewResult,
+  };
+};
+
+exports.sendTextMessage = async (media, youtubeLink, channelOverride) => {
+  const channelId = (channelOverride || getChannelId()).trim();
   const caption = buildCaption(media);
   const text = youtubeLink
     ? `${caption}\n\n[Watch on YouTube](${youtubeLink})`

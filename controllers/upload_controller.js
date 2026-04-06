@@ -7,9 +7,11 @@ const db = require('../config/db_config');
 const youtubeService = require('../services/youtube_service');
 const telegramService = require('../services/telegram_service');
 const logger = require('../utils/logger');
+const photoPreviewService = require('../services/photo_preview_service');
 
 let uploadsColumnCache = null;
 let mediaMetadataColumnCache = null;
+let mediaColumnCache = null;
 
 async function getUploadsColumns() {
   if (uploadsColumnCache) {
@@ -19,6 +21,16 @@ async function getUploadsColumns() {
   const [rows] = await db.promise().query('SHOW COLUMNS FROM uploads');
   uploadsColumnCache = new Set(rows.map((row) => row.Field));
   return uploadsColumnCache;
+}
+
+async function getMediaColumns() {
+  if (mediaColumnCache) {
+    return mediaColumnCache;
+  }
+
+  const [rows] = await db.promise().query('SHOW COLUMNS FROM media');
+  mediaColumnCache = new Set(rows.map((row) => row.Field));
+  return mediaColumnCache;
 }
 
 async function getMediaMetadataColumns() {
@@ -148,6 +160,14 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
   let telegramMsgId = null;
   let ytError = null;
   let tgError = null;
+  const mediaColumns = await getMediaColumns();
+  const hasPreviewUploadStatus = mediaColumns.has('preview_upload_status');
+  const hasPreviewFilePath = mediaColumns.has('preview_file_path');
+  const hasPreviewTelegramMsgId = mediaColumns.has('preview_telegram_msg_id');
+  const hasPreviewTelegramFileId = mediaColumns.has('preview_telegram_file_id');
+  const hasPreviewTelegramFileUniqueId = mediaColumns.has('preview_telegram_file_unique_id');
+  const hasPreviewTelegramFilePath = mediaColumns.has('preview_telegram_file_path');
+  const hasPreviewErrorMessage = mediaColumns.has('preview_error_message');
 
   // ── YouTube Upload (videos and audio only) ────────────────
   if (shouldUploadYouTube) {
@@ -207,8 +227,78 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
         ? youtubeLink
         : (uploadByPlatform.youtube?.youtube_link || null);
       const mediaWithLink = { ...media, youtube_link: existingYouTubeLink };
-      const tgResult = await telegramService.sendMedia(mediaWithLink);
-      telegramMsgId = tgResult.messageId;
+      let tgResult;
+
+      if (mediaType === 'photo') {
+        const previewPath = hasPreviewFilePath
+          ? await photoPreviewService.ensurePhotoPreview({
+              mediaId,
+              sourcePath: media.file_path,
+              existingPreviewPath: media.preview_file_path,
+            })
+          : await photoPreviewService.ensurePhotoPreview({
+              mediaId,
+              sourcePath: media.file_path,
+              existingPreviewPath: null,
+            });
+
+        if (hasPreviewUploadStatus) {
+          await db.promise().query(
+            `UPDATE media
+             SET preview_upload_status = 'in_progress'
+             WHERE id = ?`,
+            [mediaId]
+          );
+        }
+
+        tgResult = await telegramService.sendPhotoBundle({
+          ...mediaWithLink,
+          preview_file_path: previewPath,
+        });
+        telegramMsgId = tgResult.main.messageId;
+
+        const previewSetParts = [];
+        const previewSetParams = [];
+        if (hasPreviewFilePath) {
+          previewSetParts.push('preview_file_path = ?');
+          previewSetParams.push(previewPath);
+        }
+        if (hasPreviewUploadStatus) {
+          previewSetParts.push("preview_upload_status = 'success'");
+        }
+        if (hasPreviewTelegramMsgId) {
+          previewSetParts.push('preview_telegram_msg_id = ?');
+          previewSetParams.push(tgResult.preview.messageId || null);
+        }
+        if (hasPreviewTelegramFileId) {
+          previewSetParts.push('preview_telegram_file_id = ?');
+          previewSetParams.push(tgResult.preview.fileId || null);
+        }
+        if (hasPreviewTelegramFileUniqueId) {
+          previewSetParts.push('preview_telegram_file_unique_id = ?');
+          previewSetParams.push(tgResult.preview.fileUniqueId || null);
+        }
+        if (hasPreviewTelegramFilePath) {
+          previewSetParts.push('preview_telegram_file_path = ?');
+          previewSetParams.push(tgResult.preview.filePath || null);
+        }
+        if (hasPreviewErrorMessage) {
+          previewSetParts.push('preview_error_message = NULL');
+        }
+
+        if (previewSetParts.length) {
+          await db.promise().query(
+            `UPDATE media
+             SET ${previewSetParts.join(', ')}
+             WHERE id = ?`,
+            [...previewSetParams, mediaId]
+          );
+        }
+      } else {
+        tgResult = await telegramService.sendMedia(mediaWithLink);
+        telegramMsgId = tgResult.messageId;
+      }
+
       const uploadColumns = await getUploadsColumns();
       const hasTelegramFileId = uploadColumns.has('telegram_file_id');
       const hasTelegramFilePath = uploadColumns.has('telegram_file_path');
@@ -223,17 +313,23 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
 
       if (hasTelegramFileId) {
         setParts.push('telegram_file_id = ?');
-        setParams.push(tgResult.fileId || null);
+        setParams.push(mediaType === 'photo'
+          ? (tgResult.main.fileId || null)
+          : (tgResult.fileId || null));
       }
 
       if (hasTelegramFilePath) {
         setParts.push('telegram_file_path = ?');
-        setParams.push(tgResult.filePath || null);
+        setParams.push(mediaType === 'photo'
+          ? (tgResult.main.filePath || null)
+          : (tgResult.filePath || null));
       }
 
       if (hasTelegramFileUniqueId) {
         setParts.push('telegram_file_unique_id = ?');
-        setParams.push(tgResult.fileUniqueId || null);
+        setParams.push(mediaType === 'photo'
+          ? (tgResult.main.fileUniqueId || null)
+          : (tgResult.fileUniqueId || null));
       }
 
       await db.promise().query(
@@ -247,6 +343,57 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
     } catch (err) {
       tgError = err.message;
       logger.error(`TG_FAIL | media:${mediaId} | ${err.message}`);
+
+      if (mediaType === 'photo' && err.mainResult) {
+        telegramMsgId = err.mainResult.messageId || telegramMsgId;
+        try {
+          const uploadColumns = await getUploadsColumns();
+          const hasTelegramFileId = uploadColumns.has('telegram_file_id');
+          const hasTelegramFilePath = uploadColumns.has('telegram_file_path');
+          const hasTelegramFileUniqueId = uploadColumns.has('telegram_file_unique_id');
+          const setParts = [
+            'telegram_msg_id = ?',
+          ];
+          const setParams = [telegramMsgId];
+
+          if (hasTelegramFileId) {
+            setParts.push('telegram_file_id = ?');
+            setParams.push(err.mainResult.fileId || null);
+          }
+          if (hasTelegramFilePath) {
+            setParts.push('telegram_file_path = ?');
+            setParams.push(err.mainResult.filePath || null);
+          }
+          if (hasTelegramFileUniqueId) {
+            setParts.push('telegram_file_unique_id = ?');
+            setParams.push(err.mainResult.fileUniqueId || null);
+          }
+
+          await db.promise().query(
+            `UPDATE uploads
+             SET ${setParts.join(', ')}
+             WHERE media_id = ? AND platform = 'telegram'`,
+            [...setParams, mediaId]
+          );
+        } catch (partialStoreError) {
+          logger.warn(`TG_PARTIAL_STORE_FAIL | media:${mediaId} | ${partialStoreError.message}`);
+        }
+      }
+
+      if (mediaType === 'photo' && hasPreviewUploadStatus) {
+        const previewFailureSetParts = ["preview_upload_status = 'failed'"];
+        const previewFailureParams = [];
+        if (hasPreviewErrorMessage) {
+          previewFailureSetParts.push('preview_error_message = ?');
+          previewFailureParams.push(err.message);
+        }
+        await db.promise().query(
+          `UPDATE media
+           SET ${previewFailureSetParts.join(', ')}
+           WHERE id = ?`,
+          [...previewFailureParams, mediaId]
+        ).catch(() => {});
+      }
 
       await db.promise().query(
         `UPDATE uploads

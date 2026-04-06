@@ -1,7 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 const db = require('../config/db_config');
+const config = require('../config/app_config');
 const telegramService = require('../services/telegram_service');
+const photoPreviewService = require('../services/photo_preview_service');
 const logger = require('../utils/logger');
 
 const CONTENT_TYPES = {
@@ -20,6 +22,7 @@ const CONTENT_TYPES = {
 
 let uploadsColumnCache = null;
 let mediaMetadataColumnCache = null;
+let mediaColumnCache = null;
 
 async function getUploadsColumns() {
   if (uploadsColumnCache) {
@@ -31,6 +34,16 @@ async function getUploadsColumns() {
   return uploadsColumnCache;
 }
 
+async function getMediaColumns() {
+  if (mediaColumnCache) {
+    return mediaColumnCache;
+  }
+
+  const [rows] = await db.promise().query('SHOW COLUMNS FROM media');
+  mediaColumnCache = new Set(rows.map((row) => row.Field));
+  return mediaColumnCache;
+}
+
 async function getMediaMetadataColumns() {
   if (mediaMetadataColumnCache) {
     return mediaMetadataColumnCache;
@@ -39,6 +52,24 @@ async function getMediaMetadataColumns() {
   const [rows] = await db.promise().query('SHOW COLUMNS FROM media_metadata');
   mediaMetadataColumnCache = new Set(rows.map((row) => row.Field));
   return mediaMetadataColumnCache;
+}
+
+function getPublicBaseUrl() {
+  const explicit = (config.app?.publicBaseUrl || '').trim();
+  if (explicit) {
+    return explicit.replace(/\/+$/, '');
+  }
+
+  return process.env.RENDER_EXTERNAL_URL
+    ? String(process.env.RENDER_EXTERNAL_URL).replace(/\/+$/, '')
+    : '';
+}
+
+function buildPreviewUrl(mediaId) {
+  const baseUrl = getPublicBaseUrl();
+  return baseUrl
+    ? `${baseUrl}/api/media/${mediaId}/preview`
+    : `/api/media/${mediaId}/preview`;
 }
 
 function parseBoolean(value, fallback = false) {
@@ -103,12 +134,29 @@ exports.getAllMedia = async (req, res, next) => {
     const offset = (parseInt(page) - 1) * parseInt(limit);
     const metadataSelect = await buildMediaMetadataSelect();
 
+    const mediaColumns = await getMediaColumns();
+    const hasPreviewFilePath = mediaColumns.has('preview_file_path');
+    const hasPreviewTelegramFileId = mediaColumns.has('preview_telegram_file_id');
+    const hasPreviewTelegramFilePath = mediaColumns.has('preview_telegram_file_path');
+
+    const previewAvailabilityParts = [];
+    if (hasPreviewFilePath) previewAvailabilityParts.push('m.preview_file_path IS NOT NULL');
+    if (hasPreviewTelegramFileId) previewAvailabilityParts.push('m.preview_telegram_file_id IS NOT NULL');
+    if (hasPreviewTelegramFilePath) previewAvailabilityParts.push('m.preview_telegram_file_path IS NOT NULL');
+    const previewAvailabilitySql = previewAvailabilityParts.length
+      ? previewAvailabilityParts.join(' OR ')
+      : '0';
+
     let query = `
       SELECT
         m.id,
         m.type AS type,
         m.title,
-        m.thumbnail_url,
+        CASE
+          WHEN m.type = 'photo' AND (${previewAvailabilitySql})
+            THEN ?
+          ELSE m.thumbnail_url
+        END AS thumbnail_url,
         m.status,
         m.created_at,
         u.name AS uploaded_by_name,
@@ -130,7 +178,7 @@ exports.getAllMedia = async (req, res, next) => {
       WHERE m.status = 'uploaded'
     `;
 
-    const params = [];
+    const params = [buildPreviewUrl('__MEDIA_ID__')];
 
     if (type && ['video', 'photo', 'audio'].includes(type)) {
       query += ` AND m.type = ?`;
@@ -152,6 +200,11 @@ exports.getAllMedia = async (req, res, next) => {
     params.push(parseInt(limit), offset);
 
     const [rows] = await db.promise().query(query, params);
+    for (const row of rows) {
+      if (row.thumbnail_url === buildPreviewUrl('__MEDIA_ID__')) {
+        row.thumbnail_url = buildPreviewUrl(row.id);
+      }
+    }
 
     logger.db('SELECT', 'media', `returned ${rows.length} items`);
     return res.json({ success: true, data: rows });
@@ -168,13 +221,28 @@ exports.getMediaById = async (req, res, next) => {
 
   try {
     const metadataSelect = await buildMediaMetadataSelect();
+    const mediaColumns = await getMediaColumns();
+    const hasPreviewFilePath = mediaColumns.has('preview_file_path');
+    const hasPreviewTelegramFileId = mediaColumns.has('preview_telegram_file_id');
+    const hasPreviewTelegramFilePath = mediaColumns.has('preview_telegram_file_path');
+    const previewAvailabilityParts = [];
+    if (hasPreviewFilePath) previewAvailabilityParts.push('m.preview_file_path IS NOT NULL');
+    if (hasPreviewTelegramFileId) previewAvailabilityParts.push('m.preview_telegram_file_id IS NOT NULL');
+    if (hasPreviewTelegramFilePath) previewAvailabilityParts.push('m.preview_telegram_file_path IS NOT NULL');
+    const previewAvailabilitySql = previewAvailabilityParts.length
+      ? previewAvailabilityParts.join(' OR ')
+      : '0';
     const [rows] = await db.promise().query(
       `SELECT
         m.id,
         m.type AS type,
         m.file_path,
         m.title,
-        m.thumbnail_url,
+        CASE
+          WHEN m.type = 'photo' AND (${previewAvailabilitySql})
+            THEN ?
+          ELSE m.thumbnail_url
+        END AS thumbnail_url,
         m.status,
         m.created_at,
         u.name AS uploaded_by_name,
@@ -188,7 +256,7 @@ exports.getMediaById = async (req, res, next) => {
       LEFT JOIN uploads up_yt ON m.id = up_yt.media_id AND up_yt.platform = 'youtube'
       LEFT JOIN uploads up_tg ON m.id = up_tg.media_id AND up_tg.platform = 'telegram'
       WHERE m.id = ?`,
-      [id]
+      [buildPreviewUrl(id), id]
     );
 
     if (!rows.length) {
@@ -198,6 +266,97 @@ exports.getMediaById = async (req, res, next) => {
     return res.json({ success: true, data: rows[0] });
   } catch (err) {
     logger.error('getMediaById error:', err.message);
+    next(err);
+  }
+};
+
+exports.streamPhotoPreview = async (req, res, next) => {
+  const { id } = req.params;
+  const wantsDownload = req.query.download === '1';
+
+  try {
+    const mediaColumns = await getMediaColumns();
+    const previewFilePathSelect = mediaColumns.has('preview_file_path')
+      ? 'm.preview_file_path'
+      : 'NULL AS preview_file_path';
+    const previewTelegramMsgIdSelect = mediaColumns.has('preview_telegram_msg_id')
+      ? 'm.preview_telegram_msg_id'
+      : 'NULL AS preview_telegram_msg_id';
+    const previewTelegramFileIdSelect = mediaColumns.has('preview_telegram_file_id')
+      ? 'm.preview_telegram_file_id'
+      : 'NULL AS preview_telegram_file_id';
+    const previewTelegramFilePathSelect = mediaColumns.has('preview_telegram_file_path')
+      ? 'm.preview_telegram_file_path'
+      : 'NULL AS preview_telegram_file_path';
+
+    const [rows] = await db.promise().query(
+      `SELECT
+         m.id,
+         m.title,
+         m.type,
+         m.file_path,
+         ${previewFilePathSelect},
+         ${previewTelegramMsgIdSelect},
+         ${previewTelegramFileIdSelect},
+         ${previewTelegramFilePathSelect}
+       FROM media m
+       WHERE m.id = ?`,
+      [id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Media not found' });
+    }
+
+    const media = rows[0];
+    if (media.type !== 'photo') {
+      return res.status(400).json({ success: false, message: 'Preview is only available for photos' });
+    }
+
+    if (media.preview_file_path && fs.existsSync(media.preview_file_path)) {
+      const { fileSize } = streamLocalFile({
+        filePath: media.preview_file_path,
+        wantsDownload,
+        res,
+      });
+      res.setHeader('Content-Length', fileSize);
+      fs.createReadStream(media.preview_file_path).pipe(res);
+      return;
+    }
+
+    if (media.preview_telegram_file_id || media.preview_telegram_file_path) {
+      await telegramService.streamFileToResponse({
+        fileId: media.preview_telegram_file_id,
+        filePath: media.preview_telegram_file_path,
+        res,
+        wantsDownload,
+        fileName: `${media.title || `preview-${media.id}`}.jpg`,
+      });
+      return;
+    }
+
+    if (media.file_path && fs.existsSync(media.file_path)) {
+      const generatedPreviewPath = await photoPreviewService.ensurePhotoPreview({
+        mediaId: media.id,
+        sourcePath: media.file_path,
+        existingPreviewPath: media.preview_file_path,
+      });
+      const { fileSize } = streamLocalFile({
+        filePath: generatedPreviewPath,
+        wantsDownload,
+        res,
+      });
+      res.setHeader('Content-Length', fileSize);
+      fs.createReadStream(generatedPreviewPath).pipe(res);
+      return;
+    }
+
+    return res.status(404).json({
+      success: false,
+      message: 'Photo preview not available',
+    });
+  } catch (err) {
+    logger.error('streamPhotoPreview error:', err.message);
     next(err);
   }
 };
@@ -363,6 +522,7 @@ exports.createMedia = async (req, res, next) => {
     }
 
     const metadataColumns = await getMediaMetadataColumns();
+    const mediaColumns = await getMediaColumns();
     const contentCategory = explicitCategory || metadata.content_category || null;
     const uploadToTelegram = type === 'photo' || type === 'audio'
       ? true
@@ -387,6 +547,33 @@ exports.createMedia = async (req, res, next) => {
     );
 
     const mediaId = result.insertId;
+
+    if (type === 'photo' && mediaColumns.has('preview_file_path')) {
+      try {
+        const previewPath = await photoPreviewService.generatePhotoPreview({
+          mediaId,
+          sourcePath: serverFilePath,
+        });
+        const setParts = ['preview_file_path = ?'];
+        const setParams = [previewPath];
+
+        if (mediaColumns.has('thumbnail_url')) {
+          setParts.push('thumbnail_url = ?');
+          setParams.push(buildPreviewUrl(mediaId));
+        }
+
+        if (mediaColumns.has('preview_upload_status')) {
+          setParts.push("preview_upload_status = 'pending'");
+        }
+
+        await db.promise().query(
+          `UPDATE media SET ${setParts.join(', ')} WHERE id = ?`,
+          [...setParams, mediaId]
+        );
+      } catch (previewError) {
+        logger.warn(`MEDIA | preview generation failed for media:${mediaId} | ${previewError.message}`);
+      }
+    }
 
     const metadataFields = [
       ['media_id', mediaId],
