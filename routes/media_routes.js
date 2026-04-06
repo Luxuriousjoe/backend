@@ -2,7 +2,11 @@ const express = require('express');
 const router = express.Router();
 
 const mediaController = require('../controllers/media_controller');
-const { authMiddleware, adminMiddleware, mediaUploadMiddleware } = require('../middleware/auth_middleware');
+const authGuards = require('../middleware/auth_middleware');
+const authMiddleware = authGuards.authMiddleware;
+const adminMiddleware = authGuards.adminMiddleware;
+const mediaUploadMiddleware =
+  authGuards.mediaUploadMiddleware || authGuards.adminMiddleware;
 const upload = require('../middleware/upload_middleware');
 
 router.get('/', authMiddleware, mediaController.getAllMedia);
