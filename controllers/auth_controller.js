@@ -129,6 +129,10 @@ exports.login = async (req, res, next) => {
           email:      user.email,
           role:       user.role,
           avatar_url: user.avatar_url || null,
+          can_upload_media: user.can_upload_media,
+          can_manage_users: user.can_manage_users,
+          can_manage_timely_reflections: user.can_manage_timely_reflections,
+          can_manage_home_banners: user.can_manage_home_banners,
         },
       },
     });
@@ -216,7 +220,19 @@ exports.getMe = async (req, res, next) => {
   logger.info(`GET_ME | user id:${req.user?.id}`);
   try {
     const [rows] = await db.promise().query(
-      'SELECT id, name, email, role, avatar_url, created_at FROM users WHERE id = ?',
+      `SELECT
+        id,
+        name,
+        email,
+        role,
+        avatar_url,
+        created_at,
+        can_upload_media,
+        can_manage_users,
+        can_manage_timely_reflections,
+        can_manage_home_banners
+       FROM users
+       WHERE id = ?`,
       [req.user.id]
     );
     if (!rows.length) return res.status(404).json({ success: false, message: 'User not found' });

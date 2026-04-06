@@ -19,6 +19,7 @@ const authRoutes   = require('./routes/auth_routes');
 const mediaRoutes  = require('./routes/media_routes');
 const uploadRoutes = require('./routes/upload_routes');
 const adminRoutes  = require('./routes/admin_routes');
+const homeBannerRoutes = require('./routes/home_banner_routes');
 let timelyReflectionRoutes = null;
 try {
   timelyReflectionRoutes = require('./routes/timely_reflection_routes');
@@ -92,6 +93,7 @@ app.use('/api/auth',    authRoutes);
 app.use('/api/media',   mediaRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/admin',   adminRoutes);
+app.use('/api/home-banners', homeBannerRoutes);
 if (timelyReflectionRoutes) {
   app.use('/api/timely-reflections', timelyReflectionRoutes);
 }

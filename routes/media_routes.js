@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 
 const mediaController = require('../controllers/media_controller');
-const { authMiddleware, adminMiddleware } = require('../middleware/auth_middleware');
+const { authMiddleware, adminMiddleware, mediaUploadMiddleware } = require('../middleware/auth_middleware');
 const upload = require('../middleware/upload_middleware');
 
 router.get('/', authMiddleware, mediaController.getAllMedia);
@@ -13,9 +13,9 @@ router.get('/:id', authMiddleware, mediaController.getMediaById);
 router.post('/:id/visit', authMiddleware, mediaController.recordVisit);
 router.post('/:id/youtube-watch', authMiddleware, mediaController.recordYouTubeWatch);
 
-router.post('/', adminMiddleware, upload.single('file'), mediaController.createMedia);
-router.put('/:id', adminMiddleware, mediaController.updateMedia);
-router.delete('/:id', adminMiddleware, mediaController.deleteMedia);
-router.patch('/:id/thumbnail', adminMiddleware, mediaController.updateThumbnail);
+router.post('/', mediaUploadMiddleware, upload.single('file'), mediaController.createMedia);
+router.put('/:id', mediaUploadMiddleware, mediaController.updateMedia);
+router.delete('/:id', mediaUploadMiddleware, mediaController.deleteMedia);
+router.patch('/:id/thumbnail', mediaUploadMiddleware, mediaController.updateThumbnail);
 
 module.exports = router;
