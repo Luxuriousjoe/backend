@@ -26,12 +26,12 @@ try {
   logger.warn(`timely_reflection_routes not loaded: ${error.message}`);
   try {
     const timelyReflectionController = require('./controllers/timely_reflection_controller');
-    const { authMiddleware, adminMiddleware } = require('./middleware/auth_middleware');
+    const { authMiddleware, timelyReflectionAdminMiddleware } = require('./middleware/auth_middleware');
     const fallbackRouter = express.Router();
     fallbackRouter.get('/', authMiddleware, timelyReflectionController.getAll);
     fallbackRouter.get('/current', authMiddleware, timelyReflectionController.getCurrent);
-    fallbackRouter.post('/', adminMiddleware, timelyReflectionController.create);
-    fallbackRouter.delete('/:id', adminMiddleware, timelyReflectionController.remove);
+    fallbackRouter.post('/', timelyReflectionAdminMiddleware, timelyReflectionController.create);
+    fallbackRouter.delete('/:id', timelyReflectionAdminMiddleware, timelyReflectionController.remove);
     timelyReflectionRoutes = fallbackRouter;
     logger.warn('timely_reflection_routes fallback router enabled from server.js');
   } catch (fallbackError) {
@@ -159,3 +159,5 @@ db.getConnection((err, conn) => {
 });
 
 module.exports = app;
+
+

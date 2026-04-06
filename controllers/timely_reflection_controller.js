@@ -1,4 +1,6 @@
 const db = require('../config/db_config');
+const firebaseService = require('../services/firebase_service');
+const logger = require('../utils/logger');
 
 async function hasTable(tableName) {
   const [rows] = await db.promise().query('SHOW TABLES LIKE ?', [tableName]);
@@ -78,6 +80,57 @@ exports.create = async (req, res, next) => {
        VALUES (${fields.map(() => '?').join(', ')})`,
       fields.map(([, value]) => value)
     );
+
+    try {
+      if (await hasTable('device_tokens')) {
+        const [tokenRows] = await db.promise().query(
+          `SELECT device_token
+           FROM device_tokens
+           WHERE is_active = 1`
+        );
+        const tokens = tokenRows
+          .map((row) => row.device_token)
+          .filter(Boolean);
+
+        if (tokens.length) {
+          const resultPush = await firebaseService.sendTimelyReflectionNotification({
+            tokens,
+            topic,
+            reflectionId: result.insertId,
+          });
+
+          const invalidTokens = [];
+          for (let i = 0; i < resultPush.responses.length; i++) {
+            const response = resultPush.responses[i];
+            if (!response.success) {
+              const code = response.error?.code || '';
+              if (
+                code.includes('registration-token-not-registered') ||
+                code.includes('invalid-registration-token')
+              ) {
+                invalidTokens.push(tokens[i]);
+              }
+            }
+          }
+
+          if (invalidTokens.length) {
+            await db.promise().query(
+              `UPDATE device_tokens
+               SET is_active = 0, updated_at = CURRENT_TIMESTAMP
+               WHERE device_token IN (?)`,
+              [invalidTokens]
+            );
+          }
+
+          logger.info(
+            `TIMELY_REFLECTION_PUSH | sent:${resultPush.successCount} failed:${resultPush.failureCount}`
+          );
+        }
+      }
+    } catch (pushError) {
+      logger.warn(`TIMELY_REFLECTION_PUSH failed: ${pushError.message}`);
+    }
+
     return res.status(201).json({ success: true, data: { id: result.insertId } });
   } catch (err) {
     next(err);
