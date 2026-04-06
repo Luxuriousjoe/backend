@@ -378,6 +378,50 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
         } catch (partialStoreError) {
           logger.warn(`TG_PARTIAL_STORE_FAIL | media:${mediaId} | ${partialStoreError.message}`);
         }
+
+        if (mediaType === 'photo') {
+          if (hasPreviewUploadStatus) {
+            const previewFailureSetParts = ["preview_upload_status = 'failed'"];
+            const previewFailureParams = [];
+            if (hasPreviewErrorMessage) {
+              previewFailureSetParts.push('preview_error_message = ?');
+              previewFailureParams.push(err.message);
+            }
+            await db.promise().query(
+              `UPDATE media
+               SET ${previewFailureSetParts.join(', ')}
+               WHERE id = ?`,
+              [...previewFailureParams, mediaId]
+            ).catch(() => {});
+          }
+
+          await db.promise().query(
+            `UPDATE uploads
+             SET upload_status = 'success',
+                 upload_date = NOW(),
+                 error_message = NULL
+             WHERE media_id = ? AND platform = 'telegram'`,
+            [mediaId]
+          );
+
+          await db.promise().query(
+            "UPDATE media SET status = 'uploaded' WHERE id = ?",
+            [mediaId]
+          );
+
+          logger.warn(`TG_PREVIEW_ONLY_FAIL | media:${mediaId} | main photo upload succeeded but preview dump failed`);
+          tgError = null;
+          return {
+            success: true,
+            mediaId,
+            telegramMsgId,
+            youtubeLink,
+            youtubeVideoId,
+            finalStatus: shouldUploadYouTube && ytError ? 'failed' : 'uploaded',
+            previewFailed: true,
+            previewError: err.message,
+          };
+        }
       }
 
       if (mediaType === 'photo' && hasPreviewUploadStatus) {

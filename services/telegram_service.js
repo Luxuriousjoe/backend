@@ -130,6 +130,7 @@ async function sendMediaToChannel(media, channelId, options = {}) {
   logger.info(`TG | Sending ${media.type || media.media_type} to channel: ${resolvedChannelId}`);
 
   const caption = options.caption || buildCaption(media);
+  const parseMode = options.parseMode === undefined ? 'Markdown' : options.parseMode;
 
   if (!media.file_path || !fs.existsSync(media.file_path)) {
     logger.warn(`TG | File not found at "${media.file_path}" - sending text message`);
@@ -151,7 +152,9 @@ async function sendMediaToChannel(media, channelId, options = {}) {
   const formData = new FormData();
   formData.append('chat_id', resolvedChannelId);
   formData.append('caption', caption);
-  formData.append('parse_mode', 'Markdown');
+  if (parseMode) {
+    formData.append('parse_mode', parseMode);
+  }
   formData.append(field, fs.createReadStream(media.file_path));
 
   if (mediaType === 'video') {
@@ -224,12 +227,13 @@ exports.sendPhotoBundle = async (media) => {
       getPhotoDumpChannelId(),
       {
         caption: [
-          `*PHOTO PREVIEW DUMP*`,
+          'PHOTO PREVIEW DUMP',
           media.title ? `Title: ${media.title}` : null,
           `Media ID: ${media.id}`,
           '',
           'Share Grace Family Church',
         ].filter(Boolean).join('\n'),
+        parseMode: null,
       },
     );
   } catch (error) {
