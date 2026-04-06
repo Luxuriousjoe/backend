@@ -24,6 +24,10 @@ module.exports = {
     refreshSecret:  process.env.JWT_REFRESH_SECRET  || 'grace_fallback_refresh_change_in_prod',
     refreshExpires: process.env.JWT_REFRESH_EXPIRES_IN || '30d',
   },
+  firebase: {
+    serviceAccountPath: process.env.FIREBASE_SERVICE_ACCOUNT_PATH,
+    serviceAccountJson: process.env.FIREBASE_SERVICE_ACCOUNT_JSON,
+  },
   upload: {
     maxFileSizeMB: parseInt(process.env.MAX_FILE_SIZE_MB) || 4096,
   },
