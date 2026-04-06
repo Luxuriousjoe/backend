@@ -26,6 +26,9 @@ function initialize() {
   if (initialized) return admin.messaging();
 
   const serviceAccount = getServiceAccount();
+  logger.startup(
+    `Firebase Admin config loaded for project: ${serviceAccount.project_id || 'unknown-project'}`
+  );
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
   });
@@ -36,10 +39,14 @@ function initialize() {
 
 async function sendTimelyReflectionNotification({ tokens, topic, reflectionId }) {
   if (!tokens || !tokens.length) {
+    logger.warn('TIMELY_REFLECTION_PUSH skipped: no device tokens to send');
     return { successCount: 0, failureCount: 0, responses: [] };
   }
 
   const messaging = initialize();
+  logger.info(
+    `TIMELY_REFLECTION_PUSH sending to ${tokens.length} device(s) for reflection:${reflectionId}`
+  );
   const message = {
     tokens,
     notification: {

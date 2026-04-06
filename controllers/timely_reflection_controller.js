@@ -92,6 +92,10 @@ exports.create = async (req, res, next) => {
           .map((row) => row.device_token)
           .filter(Boolean);
 
+        logger.info(
+          `TIMELY_REFLECTION_PUSH token lookup found ${tokens.length} active device(s)`
+        );
+
         if (tokens.length) {
           const resultPush = await firebaseService.sendTimelyReflectionNotification({
             tokens,
