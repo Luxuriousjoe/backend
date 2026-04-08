@@ -18,6 +18,10 @@ module.exports = {
     mainPhotoChannelId: process.env.TELEGRAM_MAIN_PHOTO_CHANNEL_ID || process.env.TELEGRAM_CHANNEL_ID || '-1003509207720',
     photoDumpChannelId: process.env.TELEGRAM_PHOTO_DUMP_CHANNEL_ID || '-1003741514843',
     homeBannerChannelId: process.env.TELEGRAM_HOME_BANNER_CHANNEL_ID || '-1003741514843',
+    appReleaseChannelId:
+      process.env.TELEGRAM_APP_RELEASE_CHANNEL_ID ||
+      process.env.TELEGRAM_HOME_BANNER_CHANNEL_ID ||
+      '-1003741514843',
   },
   jwt: {
     secret:         process.env.JWT_SECRET       || 'grace_fallback_secret_change_in_prod',

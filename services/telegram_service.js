@@ -21,7 +21,7 @@ const buildCaption = (media) => {
   if (media.description) {
     lines.push(`\n${String(media.description).substring(0, 400)}`);
   }
-  lines.push('\nShare Grace Family Church');
+  lines.push('\nSHAREGRACE FAMLY CHURCH');
   return lines.join('\n');
 };
 
@@ -145,6 +145,7 @@ async function sendMediaToChannel(media, channelId, options = {}) {
     video: { endpoint: 'sendVideo', field: 'video' },
     audio: { endpoint: 'sendAudio', field: 'audio' },
     photo: { endpoint: 'sendPhoto', field: 'photo' },
+    document: { endpoint: 'sendDocument', field: 'document' },
   };
 
   const { endpoint, field } = typeMap[mediaType] || typeMap.photo;
@@ -231,7 +232,7 @@ exports.sendPhotoBundle = async (media) => {
           media.title ? `Title: ${media.title}` : null,
           `Media ID: ${media.id}`,
           '',
-          'Share Grace Family Church',
+          'SHAREGRACE FAMLY CHURCH',
         ].filter(Boolean).join('\n'),
         parseMode: null,
       },
@@ -278,3 +279,4 @@ exports.testConnection = async () => {
   logger.info(`TG | Bot connected: @${response.data.result.username}`);
   return response.data.result;
 };
+

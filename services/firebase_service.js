@@ -69,7 +69,53 @@ async function sendTimelyReflectionNotification({ tokens, topic, reflectionId })
   return messaging.sendEachForMulticast(message);
 }
 
+async function sendAppUpdateNotification({
+  tokens,
+  latestVersion,
+  forceUpdate = false,
+  body,
+}) {
+  if (!tokens || !tokens.length) {
+    logger.warn('APP_UPDATE_PUSH skipped: no device tokens to send');
+    return { successCount: 0, failureCount: 0, responses: [] };
+  }
+
+  const messaging = initialize();
+  const finalBody =
+    body ||
+    (forceUpdate
+      ? `Version ${latestVersion} is required. Please update now.`
+      : `Version ${latestVersion} is ready to install.`);
+
+  logger.info(
+    `APP_UPDATE_PUSH sending to ${tokens.length} device(s) for version:${latestVersion} force:${forceUpdate}`
+  );
+
+  const message = {
+    tokens,
+    notification: {
+      title: forceUpdate ? 'Required App Update' : 'App Update Available',
+      body: finalBody,
+    },
+    data: {
+      type: 'app_update',
+      latest_version: String(latestVersion || ''),
+      force_update: forceUpdate ? '1' : '0',
+      body: finalBody,
+    },
+    android: {
+      priority: 'high',
+      notification: {
+        channelId: 'app_update_channel',
+      },
+    },
+  };
+
+  return messaging.sendEachForMulticast(message);
+}
+
 module.exports = {
   initialize,
   sendTimelyReflectionNotification,
+  sendAppUpdateNotification,
 };
