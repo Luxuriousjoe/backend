@@ -17,7 +17,15 @@ router.get('/:id', authMiddleware, mediaController.getMediaById);
 router.post('/:id/visit', authMiddleware, mediaController.recordVisit);
 router.post('/:id/youtube-watch', authMiddleware, mediaController.recordYouTubeWatch);
 
-router.post('/', mediaUploadMiddleware, upload.single('file'), mediaController.createMedia);
+router.post(
+  '/',
+  mediaUploadMiddleware,
+  upload.fields([
+    { name: 'file', maxCount: 1 },
+    { name: 'thumbnail', maxCount: 1 },
+  ]),
+  mediaController.createMedia
+);
 router.put('/:id', mediaUploadMiddleware, mediaController.updateMedia);
 router.delete('/:id', mediaUploadMiddleware, mediaController.deleteMedia);
 router.patch('/:id/thumbnail', mediaUploadMiddleware, mediaController.updateThumbnail);

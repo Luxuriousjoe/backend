@@ -309,10 +309,6 @@ exports.streamPhotoPreview = async (req, res, next) => {
     }
 
     const media = rows[0];
-    if (media.type !== 'photo') {
-      return res.status(400).json({ success: false, message: 'Preview is only available for photos' });
-    }
-
     if (media.preview_file_path && fs.existsSync(media.preview_file_path)) {
       const { fileSize } = streamLocalFile({
         filePath: media.preview_file_path,
@@ -335,7 +331,7 @@ exports.streamPhotoPreview = async (req, res, next) => {
       return;
     }
 
-    if (media.file_path && fs.existsSync(media.file_path)) {
+    if (media.type === 'photo' && media.file_path && fs.existsSync(media.file_path)) {
       const generatedPreviewPath = await photoPreviewService.ensurePhotoPreview({
         mediaId: media.id,
         sourcePath: media.file_path,
@@ -353,7 +349,7 @@ exports.streamPhotoPreview = async (req, res, next) => {
 
     return res.status(404).json({
       success: false,
-      message: 'Photo preview not available',
+      message: 'Media thumbnail not available',
     });
   } catch (err) {
     logger.error('streamPhotoPreview error:', err.message);
@@ -478,7 +474,10 @@ exports.createMedia = async (req, res, next) => {
       });
     }
 
-    if (!req.file) {
+    const mediaFile = req.file || req.files?.file?.[0] || null;
+    const thumbnailFile = req.files?.thumbnail?.[0] || null;
+
+    if (!mediaFile) {
       return res.status(400).json({
         success: false,
         message: 'No media file uploaded',
@@ -534,7 +533,7 @@ exports.createMedia = async (req, res, next) => {
       ? (explicitScheduleAt || metadata.youtube_schedule_at || null)
       : null;
 
-    const serverFilePath = req.file.path;
+    const serverFilePath = mediaFile.path;
 
     const [columnCheck] = await db.promise().query("SHOW COLUMNS FROM media LIKE 'type'");
     const hasTypeColumn = Array.isArray(columnCheck) && columnCheck.length > 0;
@@ -573,6 +572,26 @@ exports.createMedia = async (req, res, next) => {
       } catch (previewError) {
         logger.warn(`MEDIA | preview generation failed for media:${mediaId} | ${previewError.message}`);
       }
+    }
+
+    const canSetThumbnailPreview =
+      (type === 'video' || type === 'audio') &&
+      thumbnailFile &&
+      mediaColumns.has('preview_file_path') &&
+      mediaColumns.has('thumbnail_url');
+
+    if (canSetThumbnailPreview) {
+      const setParts = ['preview_file_path = ?', 'thumbnail_url = ?'];
+      const setParams = [thumbnailFile.path, buildPreviewUrl(mediaId)];
+
+      if (mediaColumns.has('preview_upload_status')) {
+        setParts.push("preview_upload_status = 'success'");
+      }
+
+      await db.promise().query(
+        `UPDATE media SET ${setParts.join(', ')} WHERE id = ?`,
+        [...setParams, mediaId]
+      );
     }
 
     const metadataFields = [
