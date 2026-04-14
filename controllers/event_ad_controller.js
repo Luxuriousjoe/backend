@@ -99,7 +99,7 @@ exports.getAdminList = async (req, res, next) => {
     const [rows] = await db.promise().query(
       `SELECT id, image_path, ad_label, headline, subheadline, event_date, display_order, is_active, created_at
        FROM event_ads
-       ORDER BY created_at DESC`
+       ORDER BY display_order ASC, event_date ASC, created_at DESC`
     );
 
     const today = new Date();
@@ -270,6 +270,34 @@ exports.toggle = async (req, res, next) => {
     });
   } catch (error) {
     logger.error(`eventAd.toggle error: ${error.message}`);
+    next(error);
+  }
+};
+
+exports.updateOrder = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const displayOrder = Number.parseInt(req.body.display_order, 10);
+    if (Number.isNaN(displayOrder)) {
+      return res.status(400).json({ success: false, message: 'display_order must be a number' });
+    }
+
+    const [rows] = await db.promise().query(
+      'SELECT id FROM event_ads WHERE id = ? LIMIT 1',
+      [id]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Ad not found' });
+    }
+
+    await db.promise().query(
+      'UPDATE event_ads SET display_order = ? WHERE id = ?',
+      [displayOrder, id]
+    );
+
+    return res.json({ success: true, message: 'Ad order updated' });
+  } catch (error) {
+    logger.error(`eventAd.updateOrder error: ${error.message}`);
     next(error);
   }
 };

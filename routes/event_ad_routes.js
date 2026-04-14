@@ -14,6 +14,7 @@ router.get('/admin', eventAdAdminMiddleware, eventAdController.getAdminList);
 router.get('/:id/file', eventAdController.streamFile);
 router.post('/', eventAdAdminMiddleware, upload.single('file'), eventAdController.create);
 router.patch('/:id/toggle', eventAdAdminMiddleware, eventAdController.toggle);
+router.patch('/:id/order', eventAdAdminMiddleware, eventAdController.updateOrder);
 router.delete('/:id', eventAdAdminMiddleware, eventAdController.remove);
 
 module.exports = router;
