@@ -21,6 +21,8 @@ const uploadRoutes = require('./routes/upload_routes');
 const adminRoutes  = require('./routes/admin_routes');
 const homeBannerRoutes = require('./routes/home_banner_routes');
 const appReleaseRoutes = require('./routes/app_release_routes');
+const customerCareRoutes = require('./routes/customer_care_routes');
+const eventAdRoutes = require('./routes/event_ad_routes');
 let timelyReflectionRoutes = null;
 try {
   timelyReflectionRoutes = require('./routes/timely_reflection_routes');
@@ -59,12 +61,40 @@ logger.startup('='.repeat(60));
 
 // ─── Middleware ───────────────────────────────────────────────
 app.use(helmet());
-app.use(cors({
-  origin:         (process.env.ALLOWED_ORIGINS || '*').split(',').map(s => s.trim()),
-  methods:        ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials:    true,
-}));
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '*')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+const allowAnyOrigin =
+  allowedOrigins.length === 0 ||
+  allowedOrigins.includes('*') ||
+  allowedOrigins.includes('all');
+
+const localhostOriginPattern =
+  /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i;
+
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  if (allowAnyOrigin) return true;
+  if (allowedOrigins.includes(origin)) return true;
+  if (localhostOriginPattern.test(origin)) return true;
+  return false;
+}
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (isAllowedOrigin(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: false,
+  })
+);
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 300,
   message: { success: false, message: 'Too many requests — try again later.' } }));
 app.use(express.json({ limit: '10mb' }));
@@ -96,6 +126,8 @@ app.use('/api/uploads', uploadRoutes);
 app.use('/api/admin',   adminRoutes);
 app.use('/api/home-banners', homeBannerRoutes);
 app.use('/api/app-releases', appReleaseRoutes);
+app.use('/api/customer-care', customerCareRoutes);
+app.use('/api/event-ads', eventAdRoutes);
 if (timelyReflectionRoutes) {
   app.use('/api/timely-reflections', timelyReflectionRoutes);
 }
