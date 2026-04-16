@@ -197,6 +197,7 @@ async function sendMediaToChannel(media, channelId, options = {}) {
 }
 
 exports.sendMediaToChannel = sendMediaToChannel;
+exports.getPhotoDumpChannelId = getPhotoDumpChannelId;
 
 exports.sendMedia = async (media) => {
   return sendMediaToChannel(media, getChannelId());

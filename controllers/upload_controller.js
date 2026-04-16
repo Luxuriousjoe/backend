@@ -297,6 +297,96 @@ async function triggerUploadByMediaId(mediaId, actor = 'system') {
       } else {
         tgResult = await telegramService.sendMedia(mediaWithLink);
         telegramMsgId = tgResult.messageId;
+
+        // Audio thumbnails are stored in the same Telegram picture dump channel.
+        if (
+          mediaType === 'audio' &&
+          hasPreviewFilePath &&
+          media.preview_file_path
+        ) {
+          if (hasPreviewUploadStatus) {
+            await db.promise().query(
+              `UPDATE media
+               SET preview_upload_status = 'in_progress'
+               WHERE id = ?`,
+              [mediaId]
+            );
+          }
+
+          try {
+            const previewChannelId = telegramService.getPhotoDumpChannelId();
+            const previewUpload = await telegramService.sendMediaToChannel(
+              {
+                ...mediaWithLink,
+                type: 'photo',
+                file_path: media.preview_file_path,
+              },
+              previewChannelId,
+              {
+                caption: [
+                  'AUDIO THUMBNAIL STORAGE',
+                  media.title ? `Title: ${media.title}` : null,
+                  `Media ID: ${media.id}`,
+                  '',
+                  'SHAREGRACE FAMLY CHURCH',
+                ].filter(Boolean).join('\n'),
+                parseMode: null,
+              },
+            );
+
+            const previewSetParts = [];
+            const previewSetParams = [];
+            if (hasPreviewUploadStatus) {
+              previewSetParts.push("preview_upload_status = 'success'");
+            }
+            if (hasPreviewTelegramMsgId) {
+              previewSetParts.push('preview_telegram_msg_id = ?');
+              previewSetParams.push(previewUpload.messageId || null);
+            }
+            if (hasPreviewTelegramFileId) {
+              previewSetParts.push('preview_telegram_file_id = ?');
+              previewSetParams.push(previewUpload.fileId || null);
+            }
+            if (hasPreviewTelegramFileUniqueId) {
+              previewSetParts.push('preview_telegram_file_unique_id = ?');
+              previewSetParams.push(previewUpload.fileUniqueId || null);
+            }
+            if (hasPreviewTelegramFilePath) {
+              previewSetParts.push('preview_telegram_file_path = ?');
+              previewSetParams.push(previewUpload.filePath || null);
+            }
+            if (hasPreviewErrorMessage) {
+              previewSetParts.push('preview_error_message = NULL');
+            }
+
+            if (previewSetParts.length) {
+              await db.promise().query(
+                `UPDATE media
+                 SET ${previewSetParts.join(', ')}
+                 WHERE id = ?`,
+                [...previewSetParams, mediaId]
+              );
+            }
+          } catch (previewError) {
+            logger.warn(
+              `TG_AUDIO_PREVIEW_FAIL | media:${mediaId} | ${previewError.message}`
+            );
+            if (hasPreviewUploadStatus) {
+              const previewFailureSetParts = ["preview_upload_status = 'failed'"];
+              const previewFailureParams = [];
+              if (hasPreviewErrorMessage) {
+                previewFailureSetParts.push('preview_error_message = ?');
+                previewFailureParams.push(previewError.message);
+              }
+              await db.promise().query(
+                `UPDATE media
+                 SET ${previewFailureSetParts.join(', ')}
+                 WHERE id = ?`,
+                [...previewFailureParams, mediaId]
+              ).catch(() => {});
+            }
+          }
+        }
       }
 
       const uploadColumns = await getUploadsColumns();
