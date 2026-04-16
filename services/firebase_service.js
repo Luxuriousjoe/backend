@@ -60,8 +60,22 @@ async function sendTimelyReflectionNotification({ tokens, topic, reflectionId })
     },
     android: {
       priority: 'high',
+      ttl: 60 * 60 * 1000,
       notification: {
         channelId: 'timely_reflection_channel',
+        priority: 'max',
+        defaultSound: true,
+      },
+    },
+    apns: {
+      headers: {
+        'apns-priority': '10',
+      },
+      payload: {
+        aps: {
+          sound: 'default',
+          contentAvailable: true,
+        },
       },
     },
   };
@@ -105,8 +119,22 @@ async function sendAppUpdateNotification({
     },
     android: {
       priority: 'high',
+      ttl: 60 * 60 * 1000,
       notification: {
         channelId: 'app_update_channel',
+        priority: 'max',
+        defaultSound: true,
+      },
+    },
+    apns: {
+      headers: {
+        'apns-priority': '10',
+      },
+      payload: {
+        aps: {
+          sound: 'default',
+          contentAvailable: true,
+        },
       },
     },
   };
