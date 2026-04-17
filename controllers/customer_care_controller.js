@@ -1,5 +1,6 @@
 const db = require('../config/db_config');
 const logger = require('../utils/logger');
+const firebaseService = require('../services/firebase_service');
 
 async function hasCustomerCareTable() {
   const [rows] = await db
@@ -10,6 +11,29 @@ async function hasCustomerCareTable() {
 
 function sanitizeText(value, fallback = '') {
   return String(value ?? fallback).trim();
+}
+
+async function hasTable(tableName) {
+  const [rows] = await db.promise().query('SHOW TABLES LIKE ?', [tableName]);
+  return rows.length > 0;
+}
+
+async function getAdminDeviceTokens() {
+  if (!(await hasTable('device_tokens'))) return [];
+  if (!(await hasTable('users'))) return [];
+
+  const [rows] = await db.promise().query(
+    `SELECT DISTINCT dt.device_token
+     FROM device_tokens dt
+     JOIN users u ON u.id = dt.user_id
+     WHERE dt.is_active = 1
+       AND dt.device_token IS NOT NULL
+       AND dt.device_token <> ''
+       AND u.is_active = 1
+       AND u.role IN ('main_admin', 'secondary_admin')`
+  );
+
+  return rows.map((row) => row.device_token).filter(Boolean);
 }
 
 exports.submitIssue = async (req, res, next) => {
@@ -52,6 +76,23 @@ exports.submitIssue = async (req, res, next) => {
        ) VALUES (?, ?, ?, ?, 0)`,
       [req.user?.id || null, fullName, whatsappNumber, issueMessage]
     );
+
+    try {
+      const adminTokens = await getAdminDeviceTokens();
+      if (adminTokens.length) {
+        await firebaseService.sendCustomerCareFeedbackNotification({
+          tokens: adminTokens,
+          fullName,
+          whatsappNumber,
+          issueMessage,
+          feedbackId: result.insertId,
+        });
+      } else {
+        logger.warn('CUSTOMER_CARE_PUSH skipped: no active admin device tokens found');
+      }
+    } catch (pushError) {
+      logger.warn(`CUSTOMER_CARE_PUSH failed: ${pushError.message}`);
+    }
 
     return res.status(201).json({
       success: true,
@@ -140,4 +181,3 @@ exports.markAttended = async (req, res, next) => {
     next(error);
   }
 };
-

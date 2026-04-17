@@ -185,9 +185,70 @@ async function sendAppUpdateNotification({
   return messaging.sendEachForMulticast(message);
 }
 
+async function sendCustomerCareFeedbackNotification({
+  tokens,
+  fullName,
+  whatsappNumber,
+  issueMessage,
+  feedbackId,
+}) {
+  if (!tokens || !tokens.length) {
+    logger.warn('CUSTOMER_CARE_PUSH skipped: no device tokens to send');
+    return { successCount: 0, failureCount: 0, responses: [] };
+  }
+
+  const messaging = initialize();
+  const shortMessage = String(issueMessage || '').trim();
+  const body = shortMessage.length > 100
+    ? `${shortMessage.substring(0, 97)}...`
+    : shortMessage;
+
+  logger.info(
+    `CUSTOMER_CARE_PUSH sending to ${tokens.length} admin device(s) for feedback:${feedbackId}`
+  );
+
+  const message = {
+    tokens,
+    notification: {
+      title: 'New Customer Care Feedback',
+      body: body || `${fullName || 'User'} submitted a new issue.`,
+    },
+    data: {
+      type: 'customer_care_feedback',
+      feedback_id: String(feedbackId || ''),
+      full_name: String(fullName || ''),
+      whatsapp_number: String(whatsappNumber || ''),
+      issue_message: shortMessage || '',
+    },
+    android: {
+      priority: 'high',
+      ttl: 60 * 60 * 1000,
+      notification: {
+        channelId: 'customer_care_channel',
+        priority: 'max',
+        defaultSound: true,
+      },
+    },
+    apns: {
+      headers: {
+        'apns-priority': '10',
+      },
+      payload: {
+        aps: {
+          sound: 'default',
+          contentAvailable: true,
+        },
+      },
+    },
+  };
+
+  return messaging.sendEachForMulticast(message);
+}
+
 module.exports = {
   initialize,
   sendTimelyReflectionNotification,
   sendTimelyReflectionBroadcast,
   sendAppUpdateNotification,
+  sendCustomerCareFeedbackNotification,
 };
