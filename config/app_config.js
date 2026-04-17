@@ -40,4 +40,10 @@ module.exports = {
   upload: {
     maxFileSizeMB: parseInt(process.env.MAX_FILE_SIZE_MB) || 4096,
   },
+  appRelease: {
+    maxFileSizeMB:
+      parseInt(process.env.APP_RELEASE_MAX_FILE_SIZE_MB) ||
+      parseInt(process.env.MAX_FILE_SIZE_MB) ||
+      4096,
+  },
 };
