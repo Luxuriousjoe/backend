@@ -4,6 +4,8 @@ const config = require('../config/app_config');
 const logger = require('../utils/logger');
 
 let initialized = false;
+const TIMELY_REFLECTION_BROADCAST_TOPIC =
+  process.env.TIMELY_REFLECTION_BROADCAST_TOPIC || 'sharegrace_timely_reflection_all';
 
 function getServiceAccount() {
   if (config.firebase.serviceAccountJson) {
@@ -83,6 +85,47 @@ async function sendTimelyReflectionNotification({ tokens, topic, reflectionId })
   return messaging.sendEachForMulticast(message);
 }
 
+async function sendTimelyReflectionBroadcast({ topic, reflectionId }) {
+  const messaging = initialize();
+  const message = {
+    topic: TIMELY_REFLECTION_BROADCAST_TOPIC,
+    notification: {
+      title: 'New Daily Timely Reflection',
+      body: topic,
+    },
+    data: {
+      type: 'timely_reflection',
+      topic,
+      reflection_id: String(reflectionId),
+    },
+    android: {
+      priority: 'high',
+      ttl: 60 * 60 * 1000,
+      notification: {
+        channelId: 'timely_reflection_channel',
+        priority: 'max',
+        defaultSound: true,
+      },
+    },
+    apns: {
+      headers: {
+        'apns-priority': '10',
+      },
+      payload: {
+        aps: {
+          sound: 'default',
+          contentAvailable: true,
+        },
+      },
+    },
+  };
+
+  logger.info(
+    `TIMELY_REFLECTION_PUSH topic broadcast -> ${TIMELY_REFLECTION_BROADCAST_TOPIC} for reflection:${reflectionId}`
+  );
+  return messaging.send(message);
+}
+
 async function sendAppUpdateNotification({
   tokens,
   latestVersion,
@@ -145,5 +188,6 @@ async function sendAppUpdateNotification({
 module.exports = {
   initialize,
   sendTimelyReflectionNotification,
+  sendTimelyReflectionBroadcast,
   sendAppUpdateNotification,
 };

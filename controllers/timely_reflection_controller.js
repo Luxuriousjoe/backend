@@ -96,40 +96,10 @@ exports.create = async (req, res, next) => {
           `TIMELY_REFLECTION_PUSH token lookup found ${tokens.length} active device(s)`
         );
 
-        if (tokens.length) {
-          const resultPush = await firebaseService.sendTimelyReflectionNotification({
-            tokens,
-            topic,
-            reflectionId: result.insertId,
-          });
-
-          const invalidTokens = [];
-          for (let i = 0; i < resultPush.responses.length; i++) {
-            const response = resultPush.responses[i];
-            if (!response.success) {
-              const code = response.error?.code || '';
-              if (
-                code.includes('registration-token-not-registered') ||
-                code.includes('invalid-registration-token')
-              ) {
-                invalidTokens.push(tokens[i]);
-              }
-            }
-          }
-
-          if (invalidTokens.length) {
-            await db.promise().query(
-              `UPDATE device_tokens
-               SET is_active = 0, updated_at = CURRENT_TIMESTAMP
-               WHERE device_token IN (?)`,
-              [invalidTokens]
-            );
-          }
-
-          logger.info(
-            `TIMELY_REFLECTION_PUSH | sent:${resultPush.successCount} failed:${resultPush.failureCount}`
-          );
-        }
+        await firebaseService.sendTimelyReflectionBroadcast({
+          topic,
+          reflectionId: result.insertId,
+        });
       }
     } catch (pushError) {
       logger.warn(`TIMELY_REFLECTION_PUSH failed: ${pushError.message}`);
