@@ -167,27 +167,62 @@ exports.create = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'APK file is required' });
     }
 
-    const channelId = getAppReleaseChannelId();
-    tgUploadResult = await telegramService.sendMediaToChannel(
-      {
-        type: 'document',
-        file_path: req.file.path,
-      },
-      channelId,
-      {
-        caption: [
-          'APP UPDATE STORAGE',
-          `Version: ${version}`,
-          title ? `Title: ${title}` : null,
-          forceUpdate ? 'Type: FORCE UPDATE' : 'Type: NORMAL UPDATE',
-          '',
-          'SHAREGRACE FAMLY CHURCH',
-        ]
-          .filter(Boolean)
-          .join('\n'),
-        parseMode: null,
-      }
+    logger.info(
+      `appRelease.create | incoming APK size: ${req.file.size || 0} bytes (${(((req.file.size || 0) / (1024 * 1024))).toFixed(2)} MB)`
     );
+
+    const channelId = getAppReleaseChannelId();
+    try {
+      tgUploadResult = await telegramService.sendMediaToChannel(
+        {
+          type: 'document',
+          file_path: req.file.path,
+        },
+        channelId,
+        {
+          caption: [
+            'APP UPDATE STORAGE',
+            `Version: ${version}`,
+            title ? `Title: ${title}` : null,
+            forceUpdate ? 'Type: FORCE UPDATE' : 'Type: NORMAL UPDATE',
+            '',
+            'SHAREGRACE FAMLY CHURCH',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+          parseMode: null,
+        }
+      );
+    } catch (uploadErr) {
+      const upstreamStatus =
+        uploadErr?.response?.status ||
+        uploadErr?.status ||
+        null;
+      const upstreamDescription =
+        uploadErr?.response?.data?.description ||
+        uploadErr?.response?.data?.message ||
+        uploadErr?.message ||
+        'Unknown upstream upload error';
+
+      logger.error(
+        `appRelease.create | Telegram upload failed | status:${upstreamStatus || 'unknown'} | ${upstreamDescription}`
+      );
+
+      if (upstreamStatus === 413) {
+        return res.status(413).json({
+          success: false,
+          message:
+            'APK upload was rejected as too large by an upstream service (Telegram or hosting proxy). Build a smaller APK (split-per-abi) and retry.',
+          code: 'APP_RELEASE_UPSTREAM_413',
+          stage: 'telegram_upload',
+          upstream_status: 413,
+          upstream_message: upstreamDescription,
+          file_size_bytes: req.file.size || null,
+        });
+      }
+
+      throw uploadErr;
+    }
 
     if (!tgUploadResult?.fileId) {
       throw new Error('Telegram upload succeeded but file_id was not returned');
