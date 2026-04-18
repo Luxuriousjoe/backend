@@ -67,6 +67,13 @@ function normalizeReleaseRow(row, req) {
     force_update: !!row.force_update,
     notify_users: !!row.notify_users,
     created_at: row.created_at,
+    telegram_channel_id: row.telegram_channel_id || null,
+    telegram_message_id: row.telegram_message_id || null,
+    telegram_file_id: row.telegram_file_id || null,
+    telegram_file_unique_id: row.telegram_file_unique_id || null,
+    telegram_file_path: row.telegram_file_path || null,
+    file_name: row.file_name || null,
+    file_size: row.file_size || null,
     download_url: buildDownloadUrl(req),
     source_label: 'Backend release table',
   };
@@ -87,7 +94,9 @@ exports.getLatest = async (req, res, next) => {
     }
 
     const [rows] = await db.promise().query(
-      `SELECT id, version, title, release_notes, force_update, notify_users, created_at
+      `SELECT id, version, title, release_notes, force_update, notify_users, created_at,
+              telegram_channel_id, telegram_message_id, telegram_file_id,
+              telegram_file_unique_id, telegram_file_path, file_name, file_size
        FROM app_releases
        WHERE is_active = 1
        ORDER BY id DESC
@@ -115,7 +124,9 @@ exports.getAdminList = async (req, res, next) => {
     }
 
     const [rows] = await db.promise().query(
-      `SELECT id, version, title, release_notes, force_update, notify_users, is_active, created_at
+      `SELECT id, version, title, release_notes, force_update, notify_users, is_active, created_at,
+              telegram_channel_id, telegram_message_id, telegram_file_id,
+              telegram_file_unique_id, telegram_file_path, file_name, file_size
        FROM app_releases
        ORDER BY id DESC
        LIMIT 30`
@@ -244,6 +255,10 @@ exports.create = async (req, res, next) => {
         version,
         force_update: forceUpdate,
         notify_users: notifyUsers,
+        telegram_message_id: tgUploadResult.messageId || null,
+        telegram_file_id: tgUploadResult.fileId || null,
+        telegram_file_unique_id: tgUploadResult.fileUniqueId || null,
+        telegram_file_path: tgUploadResult.filePath || null,
         download_url: buildDownloadUrl(req),
       },
     });
