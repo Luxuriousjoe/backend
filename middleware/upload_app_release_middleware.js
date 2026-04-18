@@ -1,7 +1,6 @@
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const config = require('../config/app_config');
 
 const uploadDir = path.join(process.cwd(), 'uploads_tmp');
 if (!fs.existsSync(uploadDir)) {
@@ -37,9 +36,6 @@ function fileFilter(_, file, cb) {
 const uploadAppRelease = multer({
   storage,
   fileFilter,
-  limits: {
-    fileSize: (config.appRelease?.maxFileSizeMB || 4096) * 1024 * 1024,
-  },
 });
 
 module.exports = uploadAppRelease;
