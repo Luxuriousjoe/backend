@@ -4,6 +4,7 @@ const config = require('../config/app_config');
 const logger = require('../utils/logger');
 const telegramService = require('../services/telegram_service');
 const firebaseService = require('../services/firebase_service');
+const googleDriveService = require('../services/google_drive_service');
 
 function parseBool(value, fallback = false) {
   if (value === undefined || value === null || value === '') return fallback;
@@ -59,6 +60,11 @@ async function getActiveDeviceTokens() {
 
 function normalizeReleaseRow(row, req) {
   if (!row) return null;
+  const storageProvider =
+    String(row.telegram_channel_id || '').toLowerCase() === 'google_drive'
+      ? 'google_drive'
+      : 'telegram';
+
   return {
     id: row.id,
     version: row.version,
@@ -75,7 +81,11 @@ function normalizeReleaseRow(row, req) {
     file_name: row.file_name || null,
     file_size: row.file_size || null,
     download_url: buildDownloadUrl(req),
-    source_label: 'Backend release table',
+    storage_provider: storageProvider,
+    source_label:
+      storageProvider === 'google_drive'
+        ? 'Google Drive storage'
+        : 'Telegram storage',
   };
 }
 
@@ -171,57 +181,79 @@ exports.create = async (req, res, next) => {
       `appRelease.create | incoming APK size: ${req.file.size || 0} bytes (${(((req.file.size || 0) / (1024 * 1024))).toFixed(2)} MB)`
     );
 
-    const channelId = getAppReleaseChannelId();
-    try {
-      tgUploadResult = await telegramService.sendMediaToChannel(
-        {
-          type: 'document',
-          file_path: req.file.path,
-        },
-        channelId,
-        {
-          caption: [
-            'APP UPDATE STORAGE',
-            `Version: ${version}`,
-            title ? `Title: ${title}` : null,
-            forceUpdate ? 'Type: FORCE UPDATE' : 'Type: NORMAL UPDATE',
-            '',
-            'SHAREGRACE FAMLY CHURCH',
-          ]
-            .filter(Boolean)
-            .join('\n'),
-          parseMode: null,
-        }
-      );
-    } catch (uploadErr) {
-      const upstreamStatus =
-        uploadErr?.response?.status ||
-        uploadErr?.status ||
-        null;
-      const upstreamDescription =
-        uploadErr?.response?.data?.description ||
-        uploadErr?.response?.data?.message ||
-        uploadErr?.message ||
-        'Unknown upstream upload error';
+    let channelId = getAppReleaseChannelId();
+    const useGoogleDrive = googleDriveService.isConfigured();
 
-      logger.error(
-        `appRelease.create | Telegram upload failed | status:${upstreamStatus || 'unknown'} | ${upstreamDescription}`
-      );
-
-      if (upstreamStatus === 413) {
-        return res.status(413).json({
-          success: false,
-          message:
-            'APK upload was rejected as too large by an upstream service (Telegram or hosting proxy). Build a smaller APK (split-per-abi) and retry.',
-          code: 'APP_RELEASE_UPSTREAM_413',
-          stage: 'telegram_upload',
-          upstream_status: 413,
-          upstream_message: upstreamDescription,
-          file_size_bytes: req.file.size || null,
+    if (useGoogleDrive) {
+      try {
+        const driveUpload = await googleDriveService.uploadAppReleaseFile({
+          localPath: req.file.path,
+          fileName: req.file.originalname || req.file.filename || 'app-release.apk',
         });
-      }
 
-      throw uploadErr;
+        channelId = 'google_drive';
+        tgUploadResult = {
+          messageId: null,
+          fileId: driveUpload.fileId,
+          fileUniqueId: null,
+          filePath: driveUpload.downloadUrl,
+        };
+      } catch (driveErr) {
+        logger.error(`appRelease.create | Google Drive upload failed | ${driveErr.message}`);
+        throw driveErr;
+      }
+    } else {
+      try {
+        tgUploadResult = await telegramService.sendMediaToChannel(
+          {
+            type: 'document',
+            file_path: req.file.path,
+          },
+          channelId,
+          {
+            caption: [
+              'APP UPDATE STORAGE',
+              `Version: ${version}`,
+              title ? `Title: ${title}` : null,
+              forceUpdate ? 'Type: FORCE UPDATE' : 'Type: NORMAL UPDATE',
+              '',
+              'SHAREGRACE FAMLY CHURCH',
+            ]
+              .filter(Boolean)
+              .join('\n'),
+            parseMode: null,
+          }
+        );
+      } catch (uploadErr) {
+        const upstreamStatus =
+          uploadErr?.response?.status ||
+          uploadErr?.status ||
+          null;
+        const upstreamDescription =
+          uploadErr?.response?.data?.description ||
+          uploadErr?.response?.data?.message ||
+          uploadErr?.message ||
+          'Unknown upstream upload error';
+
+        logger.error(
+          `appRelease.create | Telegram upload failed | status:${upstreamStatus || 'unknown'} | ${upstreamDescription}`
+        );
+
+        if (upstreamStatus === 413) {
+          return res.status(413).json({
+            success: false,
+            message:
+              'APK upload was rejected as too large by an upstream service (Telegram or hosting proxy). Build a smaller APK (split-per-abi) and retry.',
+            code: 'APP_RELEASE_UPSTREAM_413',
+            stage: 'telegram_upload',
+            upstream_status: 413,
+            upstream_message: upstreamDescription,
+            file_size_bytes: req.file.size || null,
+          });
+        }
+
+        throw uploadErr;
+      }
     }
 
     if (!tgUploadResult?.fileId) {
@@ -340,6 +372,20 @@ exports.downloadLatest = async (req, res, next) => {
     const safeVersion = String(row.version || 'latest').replace(/[^0-9A-Za-z._-]/g, '_');
     const defaultName = `sharegrace-family-church-v${safeVersion}.apk`;
     const fileName = row.file_name || defaultName;
+
+    const storageProvider =
+      String(row.telegram_channel_id || '').toLowerCase() === 'google_drive'
+        ? 'google_drive'
+        : 'telegram';
+
+    if (storageProvider === 'google_drive') {
+      return googleDriveService.streamFileToResponse({
+        fileId: row.telegram_file_id,
+        res,
+        wantsDownload: true,
+        fileName,
+      });
+    }
 
     await telegramService.streamFileToResponse({
       fileId: row.telegram_file_id || null,

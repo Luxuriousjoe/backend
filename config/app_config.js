@@ -46,4 +46,10 @@ module.exports = {
       parseInt(process.env.MAX_FILE_SIZE_MB) ||
       4096,
   },
+  googleDrive: {
+    enabled: (process.env.GOOGLE_DRIVE_ENABLED || '').toLowerCase() === 'true',
+    folderId: process.env.GOOGLE_DRIVE_FOLDER_ID || '',
+    serviceAccountJson: process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON || '',
+    serviceAccountPath: process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_PATH || '',
+  },
 };

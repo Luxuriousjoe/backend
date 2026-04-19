@@ -105,6 +105,8 @@ async function buildMediaMetadataSelect(prefix = 'mm') {
     pick('featured_candidate'),
     pick('featured_until'),
     pick('view_count'),
+    pick('video_orientation'),
+    pick('video_aspect_ratio'),
   ].join(',\n        ');
 }
 
@@ -634,6 +636,16 @@ exports.createMedia = async (req, res, next) => {
     if (metadataColumns.has('view_count')) {
       metadataFields.push(['view_count', 0]);
     }
+    if (metadataColumns.has('video_orientation')) {
+      metadataFields.push(['video_orientation', metadata.video_orientation || null]);
+    }
+    if (metadataColumns.has('video_aspect_ratio')) {
+      const ratioValue = metadata.video_aspect_ratio;
+      metadataFields.push([
+        'video_aspect_ratio',
+        ratioValue == null || ratioValue === '' ? null : Number(ratioValue),
+      ]);
+    }
 
     await db.promise().query(
       `INSERT INTO media_metadata
@@ -737,6 +749,17 @@ exports.updateMedia = async (req, res, next) => {
           parseBoolean(metadata.featured_enabled, false)
             ? new Date(Date.now() + 24 * 60 * 60 * 1000)
             : null
+        );
+      }
+      if (metadataColumns.has('video_orientation')) {
+        setParts.push('video_orientation = ?');
+        params.push(metadata.video_orientation || null);
+      }
+      if (metadataColumns.has('video_aspect_ratio')) {
+        const ratioValue = metadata.video_aspect_ratio;
+        setParts.push('video_aspect_ratio = ?');
+        params.push(
+          ratioValue == null || ratioValue === '' ? null : Number(ratioValue)
         );
       }
 
