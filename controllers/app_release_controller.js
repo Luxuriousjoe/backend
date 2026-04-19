@@ -257,7 +257,7 @@ exports.create = async (req, res, next) => {
     }
 
     if (!tgUploadResult?.fileId) {
-      throw new Error('Telegram upload succeeded but file_id was not returned');
+      throw new Error('Release upload succeeded but file id was not returned');
     }
 
     await db.promise().query('UPDATE app_releases SET is_active = 0 WHERE is_active = 1');
